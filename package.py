@@ -339,19 +339,17 @@ def scraper(
     headers=None,
     user_agents=None,
     state_file="./state/download_state.json",
-    log_file="./logs/taxi_extraction.log",
-    console_log_file="./logs/console_log.log",
+    log_file="./logs/process_log.log",
     report_prefix="download_report",
     disable_logging=False,               
     dataset_name=None,                   
     disable_progress_bar=False,          
-    output_dir="./output",                      # <-- NEW ARG
+    output_dir="./output",
 ):
     init(autoreset=True)
     yellow_title = "Starting download" if not dataset_name else f"Starting download of {dataset_name}"
     BANNER = rf"""
 {Fore.CYAN}{Style.BRIGHT}
-
    _____                                  _      _ _     
   / ____|                                | |    (_) |    
  | (___   ___ _ __ __ _ _ __   ___ _ __  | |     _| |__  
@@ -367,13 +365,11 @@ def scraper(
 {Fore.YELLOW}{'='*60}{Fore.RESET}
 """
     logger = None
+    # Ensure log file directory exists and clear file
     if not disable_logging:
-        # Ensure log file directories exist
         if log_file:
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
-        if console_log_file:
-            os.makedirs(os.path.dirname(console_log_file), exist_ok=True)
-        logger = CustomLogger(banner=BANNER, console_log_file_path=console_log_file, file_log_path=log_file)
+        logger = CustomLogger(banner=BANNER, log_file_path=log_file)
         print(BANNER)
 
     # Ensure output_dir exists (for report PNGs/JSON)
@@ -489,14 +485,13 @@ def cli():
     parser.add_argument("--max-concurrent", type=int, default=None, help="Max parallel downloads")
     parser.add_argument("--state-file", default="download_state.json", help="Path for download state file")
     parser.add_argument("--log-file", default="taxi_extraction.log", help="Path for main log file")
-    parser.add_argument("--console-log-file", default="console_log.log", help="Path for console log file")
     parser.add_argument("--report-prefix", default="download_report", help="Prefix for report files")
     parser.add_argument("--headers", type=str, default=None, help="Path to JSON file with custom headers")
     parser.add_argument("--user-agents", type=str, default=None, help="Path to text file with custom user agents (one per line)")
-    parser.add_argument("--disable-logging", action="store_true", help="Disable all logging for production pipelines")  # <-- NEW ARG
-    parser.add_argument("--dataset-name", type=str, default=None, help="Dataset name for banner")  # <-- NEW ARG
-    parser.add_argument("--disable-progress-bar", action="store_true", help="Disable tqdm progress bar")  # <-- NEW ARG
-    parser.add_argument("--output-dir", type=str, default=".", help="Directory for report PNGs and JSON")  # <-- NEW ARG
+    parser.add_argument("--disable-logging", action="store_true", help="Disable all logging for production pipelines")
+    parser.add_argument("--dataset-name", type=str, default=None, help="Dataset name for banner")
+    parser.add_argument("--disable-progress-bar", action="store_true", help="Disable tqdm progress bar")
+    parser.add_argument("--output-dir", type=str, default=".", help="Directory for report PNGs and JSON")
     args = parser.parse_args()
 
     headers = None
@@ -509,12 +504,9 @@ def cli():
             user_agents = [line.strip() for line in f if line.strip()]
 
     if not args.disable_logging:
-        # Ensure log file directories exist
         if args.log_file:
             os.makedirs(os.path.dirname(args.log_file), exist_ok=True)
-        if args.console_log_file:
-            os.makedirs(os.path.dirname(args.console_log_file), exist_ok=True)
-        logger = CustomLogger(console_log_file_path=args.console_log_file, file_log_path=args.log_file)
+        logger = CustomLogger(log_file_path=args.log_file)
         logger.info("Starting Ray cluster...")
     else:
         logger = None
@@ -538,12 +530,11 @@ def cli():
             user_agents=user_agents,
             state_file=args.state_file,
             log_file=args.log_file,
-            console_log_file=args.console_log_file,
             report_prefix=args.report_prefix,
             disable_logging=args.disable_logging,
             dataset_name=args.dataset_name,
             disable_progress_bar=args.disable_progress_bar,
-            output_dir=args.output_dir      # <-- Pass to scraper
+            output_dir=args.output_dir
         )
     finally:
         ray.shutdown()
