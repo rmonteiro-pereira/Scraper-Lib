@@ -338,7 +338,7 @@ def scraper(
     max_concurrent=None,
     headers=None,
     user_agents=None,
-    state_file="download_state.json",
+    state_file="./state/download_state.json",
     log_file="./logs/taxi_extraction.log",
     console_log_file="./logs/console_log.log",
     report_prefix="download_report",
@@ -375,7 +375,7 @@ def scraper(
             os.makedirs(os.path.dirname(console_log_file), exist_ok=True)
         logger = CustomLogger(banner=BANNER, console_log_file_path=console_log_file, file_log_path=log_file)
         print(BANNER)
-        
+
     # Ensure output_dir exists (for report PNGs/JSON)
     if output_dir:
         output_dir_path = os.path.abspath(output_dir)
