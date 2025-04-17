@@ -18,20 +18,25 @@ class CustomLogger(logging.Formatter):
         'DEBUG': '•'
     }
 
-    def __init__(self, banner="", console_log_file_path=None, file_log_path=None):
+    def __init__(self, banner="", log_file_path=None):
         super().__init__()
-        self.path_console_log_file = console_log_file_path
-        self.path_log_file = file_log_path
+        self.path_log_file = log_file_path
         self.LOG_BUFFER_TERMINAL = []
         self.LOG_BUFFER_FILE = []
         self.BANNER = banner
+        # Remove all handlers
         for handler in logging.getLogger().handlers[:]:
             logging.getLogger().removeHandler(handler)
-        file_handler = logging.FileHandler(file_log_path, encoding='utf-8', mode='w')
-        file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(self)
-        self.file_handler = file_handler
-        logging.getLogger().addHandler(file_handler)
+        # Clear log file at start
+        if log_file_path:
+            os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+            with open(log_file_path, "w", encoding="utf-8"):
+                pass
+            file_handler = logging.FileHandler(log_file_path, encoding='utf-8', mode='a')
+            file_handler.setLevel(logging.INFO)
+            file_handler.setFormatter(self)
+            self.file_handler = file_handler
+            logging.getLogger().addHandler(file_handler)
 
     def strip_ansi(self, line):
         ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
@@ -48,8 +53,8 @@ class CustomLogger(logging.Formatter):
             print(line[1])
 
     def append_log_to_file(self, line, filename=None):
+        filename = filename or self.path_log_file
         if filename is not None:
-            # Ensure parent directory exists
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             with open(filename, "a", encoding="utf-8") as f:
                 f.write(self.strip_ansi(line) + "\n")
@@ -64,7 +69,6 @@ class CustomLogger(logging.Formatter):
         self.LOG_BUFFER_TERMINAL.append(item)
         self.LOG_BUFFER_FILE.append(item)
         self.append_log_to_file(line, self.path_log_file)
-        self.append_log_to_file(line, self.path_console_log_file)
         self.redraw_logs()
 
     def warning(self, msg):
@@ -74,7 +78,6 @@ class CustomLogger(logging.Formatter):
         self.LOG_BUFFER_TERMINAL.append(item)
         self.LOG_BUFFER_FILE.append(item)
         self.append_log_to_file(line, self.path_log_file)
-        self.append_log_to_file(line, self.path_console_log_file)
         self.redraw_logs()
 
     def error(self, msg):
@@ -84,7 +87,6 @@ class CustomLogger(logging.Formatter):
         self.LOG_BUFFER_TERMINAL.append(item)
         self.LOG_BUFFER_FILE.append(item)
         self.append_log_to_file(line, self.path_log_file)
-        self.append_log_to_file(line, self.path_console_log_file)
         self.redraw_logs()
 
     def section(self, title):
@@ -94,7 +96,6 @@ class CustomLogger(logging.Formatter):
         self.LOG_BUFFER_TERMINAL.append(item)
         self.LOG_BUFFER_FILE.append(item)
         self.append_log_to_file(line, self.path_log_file)
-        self.append_log_to_file(line, self.path_console_log_file)
         self.redraw_logs()
 
     def success(self, msg):
@@ -113,7 +114,6 @@ class CustomLogger(logging.Formatter):
         self.LOG_BUFFER_TERMINAL.append(item)
         self.LOG_BUFFER_FILE.append(item)
         self.append_log_to_file(line, self.path_log_file)
-        self.append_log_to_file(line, self.path_console_log_file)
         self.redraw_logs()
 
     def get_buffers(self):
