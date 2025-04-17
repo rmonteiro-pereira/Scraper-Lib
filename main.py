@@ -23,6 +23,7 @@ import re
 
 # Add at the top, after imports
 LOG_BUFFER = []
+LOG_FILE_BUFFER = "console_log.txt"
 
 BANNER = rf"""
 {Fore.CYAN}{Style.BRIGHT}
@@ -40,6 +41,10 @@ BANNER = rf"""
 {Fore.YELLOW}{'='*60}{Fore.RESET}
 """
 
+# --- Substitua o buffer único por dois buffers ---
+LOG_BUFFER_TERMINAL = []
+LOG_BUFFER_FILE = []
+
 def redraw_logs():
     # Clear the terminal (Windows and ANSI terminals)
     if os.name == 'nt':
@@ -49,11 +54,57 @@ def redraw_logs():
         sys.stdout.flush()
     # Always print the banner first
     print(BANNER)
-
-    # Redraw all logs
-    for line in LOG_BUFFER:
+    for line in LOG_BUFFER_TERMINAL:
         print(line)
     pass
+
+def append_log_to_file(line, filename=LOG_FILE_BUFFER):
+    with open(filename, "a", encoding="utf-8") as f:
+        f.write(strip_ansi(line) + "\n")
+
+def log_info(msg):
+    line = f"{Fore.CYAN}{msg}{Fore.RESET}"
+    LOG_BUFFER_TERMINAL.append(line)
+    LOG_BUFFER_FILE.append(line)
+    append_log_to_file(line)
+    redraw_logs()
+
+def log_warning(msg):
+    line = f"{Fore.YELLOW}{msg}{Fore.RESET}"
+    LOG_BUFFER_TERMINAL.append(line)
+    LOG_BUFFER_FILE.append(line)
+    append_log_to_file(line)
+    redraw_logs()
+
+def log_error(msg):
+    line = f"{Fore.RED}{msg}{Fore.RESET}"
+    LOG_BUFFER_TERMINAL.append(line)
+    LOG_BUFFER_FILE.append(line)
+    append_log_to_file(line)
+    redraw_logs()
+
+def log_section(title):
+    line = f"\n{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}"
+    LOG_BUFFER_TERMINAL.append(line)
+    LOG_BUFFER_FILE.append(line)
+    append_log_to_file(line)
+    redraw_logs()
+
+def log_success(msg):
+    # Se for um [DONE], limpe os [TRY] e [FAIL] desse arquivo do buffer do terminal
+    if msg.startswith("[DONE] Downloaded"):
+        filename = msg.split("Downloaded ")[1].split(" ")[0]
+        LOG_BUFFER_TERMINAL[:] = [
+            line for line in LOG_BUFFER_TERMINAL
+            if filename not in strip_ansi(line) or (
+                not strip_ansi(line).startswith("[TRY]") and not strip_ansi(line).startswith("[FAIL]")
+            )
+        ]
+    line = f"{Fore.GREEN}{msg}{Fore.RESET}"
+    LOG_BUFFER_TERMINAL.append(line)
+    LOG_BUFFER_FILE.append(line)
+    append_log_to_file(line)
+    redraw_logs()
 
 # Initialize colorama
 init(autoreset=True)
@@ -281,40 +332,6 @@ LOG_FILE_BUFFER = "console_log.txt"
 def strip_ansi(line):
     ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
     return ansi_escape.sub('', line)
-
-def append_log_to_file(line, filename=LOG_FILE_BUFFER):
-    with open(filename, "a", encoding="utf-8") as f:
-        f.write(strip_ansi(line) + "\n")
-
-def log_info(msg):
-    line = f"{Fore.CYAN}{msg}{Fore.RESET}"
-    LOG_BUFFER.append(line)
-    append_log_to_file(line)
-    redraw_logs()
-
-def log_success(msg):
-    line = f"{Fore.GREEN}{msg}{Fore.RESET}"
-    LOG_BUFFER.append(line)
-    append_log_to_file(line)
-    redraw_logs()
-
-def log_warning(msg):
-    line = f"{Fore.YELLOW}{msg}{Fore.RESET}"
-    LOG_BUFFER.append(line)
-    append_log_to_file(line)
-    redraw_logs()
-
-def log_error(msg):
-    line = f"{Fore.RED}{msg}{Fore.RESET}"
-    LOG_BUFFER.append(line)
-    append_log_to_file(line)
-    redraw_logs()
-
-def log_section(title):
-    line = f"\n{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}"
-    LOG_BUFFER.append(line)
-    append_log_to_file(line)
-    redraw_logs()
 
 def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data", state_handler=None):
     random.shuffle(file_urls)
@@ -808,6 +825,7 @@ def main():
         log_error("Failed to access main page. Check connection and URL.")
         return
     file_links = extract_file_links(html_content)
+    file_links = file_links[:50]
     if not file_links:
         log_error("No valid links found. Check extraction pattern.")
         return
@@ -840,7 +858,7 @@ if __name__ == "__main__":
     log_info("Starting Ray cluster...")
     ray.shutdown()
     ray.init(
-        num_cpus=min(8, os.cpu_count()),
+        num_cpus=min(16, os.cpu_count()),
         include_dashboard=False,
         logging_level=logging.ERROR,
         ignore_reinit_error=True,
