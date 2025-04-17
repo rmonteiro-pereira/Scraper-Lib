@@ -14,13 +14,32 @@ import hashlib
 import numpy as np
 import ray
 from collections import deque
-from pprint import pprint
-import portalocker 
+# from pprint import pprint
+import portalocker
+from colorama import init, Fore, Back, Style
 
-# Configurações
+# Initialize colorama
+init(autoreset=True)
+
+# Configurations
 BASE_URL = "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page"
 DOWNLOAD_DIR = "tlc_data"
-INCREMENTAL=False
+INCREMENTAL = False
+
+# Enhanced headers with referer and more realistic user agents
+HEADERS = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'DNT': '1',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+}
+
 USER_AGENTS = [
     # Chrome (Windows/Mac/Linux)
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -37,12 +56,6 @@ USER_AGENTS = [
     
     # Edge
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-    
-    # Dispositivos móveis
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-    
-
 ]
 
 class DownloadState:
@@ -60,7 +73,7 @@ class DownloadState:
             'completed': {},
             'failed': {},
             'delays_success': [],  # Track successful attempt delays
-            'delays_failed': [],    # Track failed attempt delays
+            'delays_failed': [],   # Track failed attempt delays
             'stats': {
                 'start_time': datetime.now().isoformat(),
                 'last_update': None,
@@ -82,7 +95,6 @@ class DownloadState:
             }
         }
         return self._cache
-
 
     def _atomic_file_operation(self, operation):
         """Execute file operations with locking"""
@@ -120,7 +132,7 @@ class DownloadState:
             self._cache[key].append(delay_record)
 
             # Update statistics for the appropriate delay type
-            stats_key = 'delay_stats_success' if success else 'delay_stats_failed'
+            stats_key = f'delay_stats_{"success" if success else "failed"}'
             delays = [d['value'] for d in self._cache[key]]
             
             if delays:
@@ -139,41 +151,15 @@ class DownloadState:
         self._atomic_file_operation(_add)
 
     def load_state(self):
-        """Load state from file, handling migrations"""
+        """Load state from file"""
         if os.path.exists(self.state_file):
             with open(self.state_file, 'r') as f:
                 try:
                     self._cache = json.load(f)
-                    
-                    # Migration from old format if needed
-                    if 'delays' in self._cache:  # Old unified delay list
-                        if 'delays_success' not in self._cache:
-                            self._cache['delays_success'] = self._cache.get('delays', [])
-                            if 'delays' in self._cache:
-                                del self._cache['delays']
-                        if 'delays_failed' not in self._cache:
-                            self._cache['delays_failed'] = []
-                            
-                        # Migrate stats if needed
-                        if 'delay_stats' in self._cache.get('stats', {}):
-                            if 'delay_stats_success' not in self._cache['stats']:
-                                self._cache['stats']['delay_stats_success'] = self._cache['stats'].get('delay_stats', {})
-                                if 'delay_stats' in self._cache['stats']:
-                                    del self._cache['stats']['delay_stats']
-                            if 'delay_stats_failed' not in self._cache['stats']:
-                                self._cache['stats']['delay_stats_failed'] = {
-                                    'min': None,
-                                    'max': None,
-                                    'avg': None,
-                                    'median': None,
-                                    'percentiles': {}
-                                }
-                    
                 except json.JSONDecodeError:
                     self.generate()
         else:
             self.generate()
-
 
     def save_state(self):
         def _save():
@@ -218,11 +204,22 @@ class DownloadState:
     def state(self):
         return self._cache
 
-# Modifique a função parallel_download_with_ray
+def print_banner():
+    print(Fore.CYAN + r"""
+   _____ _      _____    _____             _            
+  / ____| |    |_   _|  / ____|           | |           
+ | |    | |      | |   | |     _ __   ___ | | _____ _ __
+ | |    | |      | |   | |    | '_ \ / _ \| |/ / _ \ '__|
+ | |____| |____ _| |_  | |____| | | | (_) |   <  __/ |   
+  \_____|______|_____|  \_____|_| |_|\___/|_|\_\___|_|   
+    """)
+    print(Fore.YELLOW + "="*60)
+    print(Fore.GREEN + "NYC TLC Trip Record Data Downloader".center(60))
+    print(Fore.YELLOW + "="*60 + "\n")
+
 def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data", state_handler=None):
-    """Versão com fila distribuída para evitar duplicação"""
-    
-    # Cria uma fila compartilhada
+    """Distributed queue version to avoid duplication"""
+    random.shuffle(file_urls)
     @ray.remote
     class Queue:
         def __init__(self, items):
@@ -236,20 +233,28 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
         def get_size(self):
             return len(self.items)
 
-    # Inicializa a fila
+    # Initialize queue
     queue = Queue.remote(file_urls)
     active_tasks = []
     results = []
-    dynamic_delay = 0.3
+    dynamic_delay = 1.0  # Increased initial delay
     
-    with tqdm(total=len(file_urls)) as pbar:
-        # Envia tarefas iniciais
+    # Custom progress bar style
+    bar_format = f"{Fore.GREEN}{{l_bar}}{Fore.BLUE}{{bar}}{Fore.RESET}{{r_bar}}"
+    
+    with tqdm(total=len(file_urls), 
+              desc=f"{Fore.YELLOW}Downloading Files{Fore.RESET}", 
+              bar_format=bar_format,
+              unit="file",
+              ncols=100) as pbar:
+        
+        # Send initial tasks
         for _ in range(max_concurrent):
             url = ray.get(queue.get_next.remote())
             if url:
                 active_tasks.append(download_file_ray.remote(url, download_dir, state_handler))
         
-        # Processa resultados
+        # Process results
         while active_tasks:
             ready, active_tasks = ray.wait(active_tasks, timeout=5.0)
             
@@ -258,81 +263,125 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
                 results.append(result)
                 pbar.update(1)
                 
-                # Atualiza delay
-                if result.get('delay'):
-                    dynamic_delay = (dynamic_delay + result['delay']) / 2
+                # Update status based on result
+                if result['status'] == 'success':
+                    pbar.set_postfix_str(f"{Fore.GREEN}✔ Success{Fore.RESET}", refresh=True)
+                elif result['status'] == 'error':
+                    pbar.set_postfix_str(f"{Fore.RED}✖ Error{Fore.RESET}", refresh=True)
+                else:
+                    pbar.set_postfix_str(f"{Fore.YELLOW}↻ Skipped{Fore.RESET}", refresh=True)
                 
-                # Pega próximo item da fila
-                time.sleep(dynamic_delay * random.uniform(0.8, 1.2))
+                # Dynamic delay adjustment
+                if result.get('delay'):
+                    dynamic_delay = max(1.0, (dynamic_delay + result['delay']) / 2)
+                
+                # Get next item with randomized delay
+                time.sleep(dynamic_delay * random.uniform(0.9, 1.1))
                 next_url = ray.get(queue.get_next.remote())
                 if next_url:
                     active_tasks.append(download_file_ray.remote(next_url, download_dir, state_handler))
     
     return results
 
-
 @ray.remote
 def download_file_ray(file_url, download_dir="data", state_handler=None):
     CHUNK_SIZE = 5 * 1024 * 1024  # 5MB
-    RETRY_DELAYS = [0.1, 0.5, 1.0]  # Progressive delays for retries
-    current_delay = RETRY_DELAYS[0]  # Initialize default delay
+    INITIAL_DELAY = 1.0  # Initial delay in seconds
+    MAX_DELAY = 60.0     # Maximum delay in seconds
+    MAX_RETRIES = 5      # Maximum number of retries
+    current_delay = INITIAL_DELAY
     temp_filename = None
     
     try:
-        # Verificar estado prévio
+        # Check if file already downloaded
         if state_handler and state_handler.is_completed(file_url):
-            print(f"Já foi baixado: {file_url}")
+            print(f"{Fore.CYAN}[SKIP]{Fore.RESET} Already downloaded: {Fore.BLUE}{file_url}{Fore.RESET}")
             return {"status": "skipped", "file": file_url, "reason": "already_completed"}
         
-        print(f'Tentando {file_url}')
-        # Configuração do download
+        print(f"{Fore.YELLOW}[TRY]{Fore.RESET} Downloading: {Fore.BLUE}{file_url}{Fore.RESET}")
+        
+        # Configure download
         local_filename = os.path.join(download_dir, file_url.split('/')[-1])
-        headers = {'User-Agent': random.choice(USER_AGENTS)}
-        temp_filename = f"{local_filename}.tmp"
+        
+        # Enhanced headers with referer
+        headers = HEADERS.copy()
+        headers.update({
+            'User-Agent': random.choice(USER_AGENTS),
+            'Referer': BASE_URL
+        })
+        
+        # Create unique temp filename
+        timestamp = int(time.time())
+        temp_filename = f"{local_filename}.{timestamp}.tmp"
 
-        for attempt in range(len(RETRY_DELAYS) + 1):  # +1 for the initial attempt
+        for attempt in range(MAX_RETRIES + 1):  # +1 for the initial attempt
             try:
-                delay_start = time.time()
-                current_delay = RETRY_DELAYS[attempt] if attempt < len(RETRY_DELAYS) else 2.0
-                print(f"Using delay: {current_delay} seconds")
-                time.sleep(current_delay)
-                actual_delay = time.time() - delay_start
-                
-      
+                # Exponential backoff with jitter
+                if attempt > 0:
+                    current_delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
+                    current_delay *= random.uniform(0.8, 1.2)  # Add jitter
+                    print(f"{Fore.MAGENTA}[WAIT]{Fore.RESET} Attempt {attempt + 1}: Waiting {Fore.GREEN}{current_delay:.1f}s{Fore.RESET}")
+                    time.sleep(current_delay)
 
-                # Download com verificação de integridade
+                # Create a new session for each attempt
+                session = requests.Session()
+                session.headers.update(headers)
+                
+                # Download with session and timeout
                 start_time = time.time()
-                with requests.get(file_url, headers=headers, stream=True, timeout=(60, 180)) as r:
+                with session.get(file_url, stream=True, timeout=(30, 60)) as r:
+                    if r.status_code == 403:
+                        raise Exception("403 Forbidden - Potential blocking detected")
                     r.raise_for_status()
+                    
                     if state_handler:
-                        state_handler.add_delay(actual_delay, success=True)
+                        state_handler.add_delay(current_delay, success=True)
                     
                     if r.url != file_url:
-                        print(f"Redirect detected: {file_url} -> {r.url}")
-                        file_url = r.url
+                        print(f"{Fore.CYAN}[REDIR]{Fore.RESET} {file_url} → {r.url}")
 
                     total_size = int(r.headers.get('content-length', 0))
                     downloaded = 0
-                    
-                    with open(temp_filename, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
-                            if not chunk:
-                                continue
-                            f.write(chunk)
-                            downloaded += len(chunk)
+
+                    # Remove any existing temp file
+                    if os.path.isfile(temp_filename):
+                        os.remove(temp_filename)
+
+                    # Progress bar for individual file download
+                    with tqdm(total=total_size, 
+                             unit='B', 
+                             unit_scale=True, 
+                             unit_divisor=1024,
+                             desc=f"{Fore.GREEN}Downloading{Fore.RESET} {os.path.basename(local_filename)}",
+                             leave=False,
+                             ncols=80) as file_bar:
+                        
+                        with open(temp_filename, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+                                if not chunk:
+                                    continue
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                file_bar.update(len(chunk))
                     
                     if total_size > 0 and downloaded != total_size:
                         raise Exception(f"Size mismatch: expected {total_size}, got {downloaded}")
 
-                # Commit do download
+                # Remove existing file if it exists before rename
+                if os.path.exists(local_filename):
+                    os.remove(local_filename)
+                
+                # Commit download
                 os.rename(temp_filename, local_filename)
                 download_time = time.time() - start_time
 
-                # Atualizar estado
+                # Update state
                 if state_handler:
                     state_handler.add_completed(file_url, local_filename, downloaded)
 
-
+                print(f"{Fore.GREEN}[DONE]{Fore.RESET} Downloaded {Fore.BLUE}{os.path.basename(local_filename)}{Fore.RESET} "
+                      f"({downloaded/1024/1024:.2f} MB) in {download_time:.2f}s")
+                
                 return {
                     "status": "success",
                     "file": local_filename,
@@ -344,15 +393,31 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
 
             except Exception as e:
                 if state_handler:
-                    state_handler.add_delay(actual_delay, success=False)
-                if attempt >= len(RETRY_DELAYS):  # Last attempt failed
+                    state_handler.add_delay(current_delay, success=False)
+                
+                if "403" in str(e):
+                    # Rotate user agent for 403 errors
+                    headers['User-Agent'] = random.choice(USER_AGENTS)
+                    print(f"{Fore.RED}[403]{Fore.RESET} Rotating User-Agent and retrying...")
+                
+                if attempt >= MAX_RETRIES:
                     raise
-                print(f"Attempt {attempt + 1} failed, retrying: {str(e)}")
+                
+                error_msg = str(e)
+                if "SSL" in error_msg:
+                    error_msg = "SSL Error - retrying with different parameters"
+                elif "Connection" in error_msg:
+                    error_msg = "Connection Error - retrying"
+                
+                print(f"{Fore.YELLOW}[RETRY]{Fore.RESET} Attempt {attempt + 1} failed: {Fore.RED}{error_msg}{Fore.RESET}")
 
     except Exception as e:
-        # Registrar falha
+        # Record failure
         if state_handler:
             state_handler.add_failed(file_url, e)
+        
+        print(f"{Fore.RED}[FAIL]{Fore.RESET} Failed to download {Fore.BLUE}{file_url}{Fore.RESET} after {MAX_RETRIES} attempts: "
+              f"{Fore.RED}{str(e)}{Fore.RESET}")
         
         return {
             "status": "error",
@@ -365,89 +430,10 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
         }
     finally:
         if temp_filename and os.path.exists(temp_filename):
-            os.remove(temp_filename)
-
-
-def main():
-    print("Iniciando robô de download distribuído do TLC Trip Record Data")
-    print(f"Ray version: {ray.__version__}")
-    print(f"CPUs disponíveis: {ray.available_resources()['CPU']}")
-    
-    # Configuração inicial
-    setup_download_dir()
-    base_url = "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page"
-    
-    # 1. Coleta de links
-    print("\nFase 1: Coletando links de arquivos...")
-    html_content = get_page_content(base_url)
-    if not html_content:
-        print("Falha ao acessar a página principal. Verifique conexão e URL.")
-        return
-
-    file_links = extract_file_links(html_content)
-    if not file_links:
-        print("Nenhum link válido encontrado. Verifique o padrão de extração.")
-        return
-        
-    print(f"Encontrados {len(file_links)} arquivos para download")
-    pprint(file_links)
-    # 2. Filtragem opcional (por ano/mês/tipo)
-    # Exemplo: baixar apenas dados de 2023 em formato Parquet
-    # file_links = [url for url in file_links 
-    #              if '2023' in url and 'parquet' in url.lower()]
-    # print(f"Filtrando para {len(file_links)} arquivos relevantes")
-    
-    # 3. Download paralelo com Ray
-    print("\nFase 2: Iniciando downloads paralelos com Ray...")
-    start_time = time.time()
-    
-    max_concurrent = min(16, int(ray.available_resources()['CPU'] * 1.5))
-    print(f"Configurando {max_concurrent} workers paralelos")
-    
-    # Cria o state_handler uma única vez
-    state_handler = DownloadState(incremental=INCREMENTAL)
-
-    # Usar a nova versão com fila distribuída
-    results = parallel_download_with_ray(file_links, max_concurrent, "tlc_data", state_handler)
-    
-    # 4. Análise de resultados
-    print("\nFase 3: Consolidando resultados...")
-    success = sum(1 for r in results if r['status'] == 'success')
-    skipped = sum(1 for r in results if r['status'] == 'skipped')
-    errors = sum(1 for r in results if r['status'] == 'error')
-    
-    total_size_gb = sum(
-        r['size'] for r in results 
-        if r['status'] == 'success' and 'size' in r
-    ) / (1024**3)
-    
-    total_time = time.time() - start_time
-    
-    print("\nResumo final:")
-    print(f"- Arquivos baixados: {success}")
-    print(f"- Arquivos existentes (pulados): {skipped}")
-    print(f"- Erros: {errors}")
-    print(f"- Total de dados: {total_size_gb:.2f} GB")
-    print(f"- Tempo total: {total_time:.2f} segundos")
-    print(f"- Throughput: {total_size_gb/(total_time/60):.2f} GB/min")
-    
-    # 5. Tratamento de erros (opcional)
-    if errors > 0:
-        print("\nArquivos com erro:")
-        error_files = [r['file'] for r in results if r['status'] == 'error']
-        for i, ef in enumerate(error_files[:5], 1):
-            print(f"{i}. {ef}")
-        if len(error_files) > 5:
-            print(f"... e mais {len(error_files)-5} erros")
-        
-        # Gerar arquivo de log
-        with open('download_errors.log', 'w') as f:
-            f.write("\n".join(error_files))
-        print("Lista completa de erros salva em download_errors.log")
-
-    generate_report(results, state_handler)  
-
-    
+            try:
+                os.remove(temp_filename)
+            except Exception as e:
+                print(f"{Fore.YELLOW}[WARN]{Fore.RESET} Could not remove temp file {temp_filename}: {e}")
 
 def generate_report(results, state):
     """Generate comprehensive statistics report with visualization"""
@@ -456,19 +442,10 @@ def generate_report(results, state):
     delays_failed = state.state.get('delays_failed', [])
     
     # Prepare delay statistics
-    delay_stats = {
-        'success': {
-            'values': [d['value'] for d in delays_success],
-            'timestamps': [datetime.fromisoformat(d['timestamp']) for d in delays_success]
-        },
-        'failed': {
-            'values': [d['value'] for d in delays_failed],
-            'timestamps': [datetime.fromisoformat(d['timestamp']) for d in delays_failed]
-        }
-    }
-
+    success_delays = [d['value'] for d in delays_success]
+    failed_delays = [d['value'] for d in delays_failed]
+    
     # Calculate statistics for successful delays
-    success_delays = delay_stats['success']['values']
     success_stats = {}
     if success_delays:
         success_stats = {
@@ -483,7 +460,6 @@ def generate_report(results, state):
         }
 
     # Calculate statistics for failed delays
-    failed_delays = delay_stats['failed']['values']
     failed_stats = {}
     if failed_delays:
         failed_stats = {
@@ -505,9 +481,11 @@ def generate_report(results, state):
             "skipped": sum(1 for r in results if r['status'] == 'skipped'),
             "failed": sum(1 for r in results if r['status'] == 'error'),
             "total_bytes": state.state['stats']['total_bytes'],
-            "throughput_gbps": state.state['stats']['total_bytes'] * 8 / (1024**3) / max(1, (datetime.fromisoformat(state.state['stats']['last_update'])) \
-                                                                                         - datetime.fromisoformat(state.state['stats']['start_time'])).total_seconds(),
-            "time_elapsed": str(datetime.fromisoformat(state.state['stats']['last_update']) - datetime.fromisoformat(state.state['stats']['start_time']))
+            "throughput_gbps": state.state['stats']['total_bytes'] * 8 / (1024**3) / max(
+                1, (datetime.fromisoformat(state.state['stats']['last_update']) - 
+                datetime.fromisoformat(state.state['stats']['start_time'])).total_seconds()),
+            "time_elapsed": str(datetime.fromisoformat(state.state['stats']['last_update']) - 
+                              datetime.fromisoformat(state.state['stats']['start_time']))
         },
         "delays": {
             "success": success_stats,
@@ -516,7 +494,7 @@ def generate_report(results, state):
         "failed_downloads": [
             {"url": r['file'], "error": r['error'], "retries": r.get('retry_count', 0)}
             for r in results if r['status'] == 'error'
-        ][:100]  # Limit to 100 entries
+        ][:100]
     }
 
     # Generate visualizations if matplotlib is available
@@ -527,9 +505,9 @@ def generate_report(results, state):
             
             # Time-series plot
             plt.subplot(1, 2, 1)
-            plt.plot(delay_stats['success']['timestamps'], delay_stats['success']['values'], 
-                    'b.', alpha=0.5, label='Sucesso')
-            plt.title('Evolução dos Delays')
+            plt.plot([datetime.fromisoformat(d['timestamp']) for d in delays_success], 
+                    success_delays, 'b.', alpha=0.5, label='Sucesso')
+            plt.title('Evolução dos Delays (Sucessos)')
             plt.xlabel('Tempo')
             plt.ylabel('Delay (segundos)')
             plt.grid(True, alpha=0.3)
@@ -537,9 +515,8 @@ def generate_report(results, state):
             
             # Distribution plot
             plt.subplot(1, 2, 2)
-            plt.hist(delay_stats['success']['values'], bins=20, 
-                    color='g', alpha=0.7, label='Sucesso')
-            plt.title('Distribuição dos Delays')
+            plt.hist(success_delays, bins=20, color='g', alpha=0.7, label='Sucesso')
+            plt.title('Distribuição dos Delays (Sucessos)')
             plt.xlabel('Delay (segundos)')
             plt.ylabel('Frequência')
             plt.grid(True, alpha=0.3)
@@ -551,12 +528,11 @@ def generate_report(results, state):
             plt.close()
             report['success_delay_plot'] = success_plot_filename
 
-        # Create separate figure for failed delays if they exist
+        # Create figure for failed delays
         if failed_delays:
             plt.figure(figsize=(8, 5))
-            plt.hist(delay_stats['failed']['values'], bins=20, 
-                    color='r', alpha=0.7, label='Falha')
-            plt.title('Distribuição dos Delays de Falha')
+            plt.hist(failed_delays, bins=20, color='r', alpha=0.7, label='Falhas')
+            plt.title('Distribuição dos Delays (Falhas)')
             plt.xlabel('Delay (segundos)')
             plt.ylabel('Frequência')
             plt.grid(True, alpha=0.3)
@@ -577,64 +553,52 @@ def generate_report(results, state):
         json.dump(report, f, indent=2)
 
     # Print summary to console
-    print("\n=== RESUMO ESTATÍSTICO ===")
-    print(f"Total de arquivos processados: {report['summary']['total_files']}")
-    print(f"Taxa de sucesso: {report['summary']['success']/report['summary']['total_files']:.1%}")
-    print(f"Throughput médio: {report['summary']['throughput_gbps']:.2f} Gbps")
-    print(f"Tempo total decorrido: {report['summary']['time_elapsed']}")
-    
-    # Print delay statistics
-    if success_delays:
-        print("\n=== ESTATÍSTICAS DE DELAY (SUCESSOS) ===")
-        print(f"Média: {report['delays']['success']['avg']:.3f}s")
-        print(f"Mínimo: {report['delays']['success']['min']:.3f}s")
-        print(f"Máximo: {report['delays']['success']['max']:.3f}s")
-        print(f"Mediana: {report['delays']['success']['median']:.3f}s")
-        print(f"Percentil 95: {report['delays']['success']['percentiles']['95th']:.3f}s")
-    
-    if failed_delays:
-        print("\n=== ESTATÍSTICAS DE DELAY (FALHAS) ===")
-        print(f"Média: {report['delays']['failed']['avg']:.3f}s")
-        print(f"Mínimo: {report['delays']['failed']['min']:.3f}s")
-        print(f"Máximo: {report['delays']['failed']['max']:.3f}s")
-        print(f"Mediana: {report['delays']['failed']['median']:.3f}s")
-        print(f"Percentil 95: {report['delays']['failed']['percentiles']['95th']:.3f}s")
+    print(f"\n{Fore.CYAN}=== {Style.BRIGHT}DOWNLOAD SUMMARY{Style.NORMAL} ===")
+    print(f"{Fore.GREEN}✔ Success: {report['summary']['success']}/{report['summary']['total_files']} ({report['summary']['success']/report['summary']['total_files']:.1%})")
+    print(f"{Fore.YELLOW}↻ Skipped: {report['summary']['skipped']}")
+    print(f"{Fore.RED}✖ Failed: {report['summary']['failed']}")
+    print(f"{Fore.BLUE}Total data: {report['summary']['total_bytes']/(1024**3):.2f} GB")
+    print(f"Throughput: {report['summary']['throughput_gbps']:.2f} Gbps")
+    print(f"Time elapsed: {report['summary']['time_elapsed']}{Fore.RESET}")
 
     # Print visualization info
     if 'success_delay_plot' in report:
-        print(f"\nGráfico de delays de sucesso salvo em: {report['success_delay_plot']}")
+        print(f"\n{Fore.CYAN}Success delay plot saved to: {report['success_delay_plot']}{Fore.RESET}")
     if 'failed_delay_plot' in report:
-        print(f"Gráfico de delays de falha salvo em: {report['failed_delay_plot']}")
+        print(f"{Fore.CYAN}Failed delay plot saved to: {report['failed_delay_plot']}{Fore.RESET}")
 
-    print(f"\nRelatório completo salvo em: {report_filename}")
-
+    print(f"\n{Fore.CYAN}Full report saved to: {report_filename}{Fore.RESET}")
 
 def setup_download_dir():
-    """Cria o diretório de download se não existir"""
+    """Create download directory if it doesn't exist"""
     if not os.path.exists(DOWNLOAD_DIR):
         os.makedirs(DOWNLOAD_DIR)
-        print(f"Diretório {DOWNLOAD_DIR} criado.")
+        print(f"{Fore.GREEN}[DIR]{Fore.RESET} Created directory: {Fore.BLUE}{DOWNLOAD_DIR}{Fore.RESET}")
     else:
-        print(f"Diretório {DOWNLOAD_DIR} já existe.")
+        print(f"{Fore.CYAN}[DIR]{Fore.RESET} Directory exists: {Fore.BLUE}{DOWNLOAD_DIR}{Fore.RESET}")
 
 def get_page_content(url):
-    """Obtém o conteúdo HTML da página"""
-    headers = {'User-Agent': random.choice(USER_AGENTS)}
+    """Get HTML content of the page with better header handling"""
+    headers = HEADERS.copy()
+    headers['User-Agent'] = random.choice(USER_AGENTS)
+    
+    session = requests.Session()
+    session.headers.update(headers)
+    
     try:
-        response = requests.get(url, headers=headers, timeout=(10, 30))
+        response = session.get(url, timeout=(10, 30))
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        print(f"Erro ao acessar a página: {e}")
+        print(f"{Fore.RED}[ERROR]{Fore.RESET} Error accessing page: {e}")
         return None
 
 def extract_file_links(html_content):
-    """Extrai os links de arquivos para download da página"""
+    """Extract file download links from the page"""
     soup = BeautifulSoup(html_content, 'html.parser')
     file_links = []
     
-    # Procurar por links que contenham padrões de arquivos de dados
-    # (ajuste esses padrões conforme necessário)
+    # Search for links containing data file patterns
     patterns = ['.parquet', '.csv', '.zip', '.gz', 'trip data']
     
     for a_tag in soup.find_all('a', href=True):
@@ -644,22 +608,78 @@ def extract_file_links(html_content):
             file_links.append(absolute_url)
     
     return file_links
- # Adicione no topo com os outros imports
 
+def main():
+    print_banner()
+    
+    print(f"{Fore.YELLOW}[INFO]{Fore.RESET} Ray version: {Fore.CYAN}{ray.__version__}{Fore.RESET}")
+    print(f"{Fore.YELLOW}[INFO]{Fore.RESET} Available CPUs: {Fore.CYAN}{ray.available_resources()['CPU']}{Fore.RESET}")
+    
+    # Initial setup
+    setup_download_dir()
+    
+    # Phase 1: Link collection
+    print(f"\n{Fore.CYAN}=== PHASE 1: Collecting file links ==={Fore.RESET}")
+    html_content = get_page_content(BASE_URL)
+    if not html_content:
+        print(f"{Fore.RED}[ERROR]{Fore.RESET} Failed to access main page. Check connection and URL.")
+        return
 
+    file_links = extract_file_links(html_content)
+    if not file_links:
+        print(f"{Fore.RED}[ERROR]{Fore.RESET} No valid links found. Check extraction pattern.")
+        return
+        
+    print(f"{Fore.GREEN}[INFO]{Fore.RESET} Found {Fore.CYAN}{len(file_links)}{Fore.RESET} files to download")
+    
+    # Phase 2: Parallel downloads with Ray
+    print(f"\n{Fore.CYAN}=== PHASE 2: Parallel downloads with Ray ==={Fore.RESET}")
+    start_time = time.time()
+    
+    max_concurrent = min(8, int(ray.available_resources()['CPU'] * 1.5))
+    print(f"{Fore.YELLOW}[CONFIG]{Fore.RESET} Using {Fore.CYAN}{max_concurrent}{Fore.RESET} parallel workers")
+    
+    # Create state handler
+    state_handler = DownloadState(incremental=INCREMENTAL)
 
+    # Use distributed queue version
+    results = parallel_download_with_ray(file_links, max_concurrent, "tlc_data", state_handler)
+    
+    # Phase 3: Results analysis
+    print(f"\n{Fore.CYAN}=== PHASE 3: Results analysis ==={Fore.RESET}")
+    success = sum(1 for r in results if r['status'] == 'success')
+    skipped = sum(1 for r in results if r['status'] == 'skipped')
+    errors = sum(1 for r in results if r['status'] == 'error')
+    
+    total_size_gb = sum(
+        r['size'] for r in results 
+        if r['status'] == 'success' and 'size' in r
+    ) / (1024**3)
+    
+    total_time = time.time() - start_time
+    
+    print(f"\n{Fore.CYAN}=== FINAL SUMMARY ===")
+    print(f"{Fore.GREEN}✔ Downloaded: {success}")
+    print(f"{Fore.YELLOW}↻ Skipped: {skipped}")
+    print(f"{Fore.RED}✖ Errors: {errors}")
+    print(f"{Fore.BLUE}Total data: {total_size_gb:.2f} GB")
+    print(f"Total time: {total_time:.2f} seconds")
+    print(f"Throughput: {total_size_gb/(total_time/60):.2f} GB/min{Fore.RESET}")
+    
+    generate_report(results, state_handler)
 
 if __name__ == "__main__":
-    # Inicializa o Ray apenas quando executado diretamente
-    print("Começando....")
+    # Initialize Ray only when run directly
+    print(f"{Fore.YELLOW}[INIT]{Fore.RESET} Starting Ray cluster...")
     ray.shutdown()
     ray.init(
-        num_cpus=min(16, os.cpu_count()),
+        num_cpus=min(8, os.cpu_count()),
         include_dashboard=False,
-        logging_level= logging.WARNING,
+        logging_level=logging.WARNING,
         ignore_reinit_error=True
     )
     try:
         main()
     finally:
         ray.shutdown()
+        print(f"{Fore.YELLOW}[END]{Fore.RESET} Ray cluster shutdown")
