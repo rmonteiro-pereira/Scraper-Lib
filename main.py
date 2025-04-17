@@ -7,6 +7,7 @@ from tqdm import tqdm
 from urllib.parse import urljoin
 import time
 import random
+import sys
 import json
 from datetime import datetime
 import matplotlib.pyplot as plt 
@@ -218,15 +219,19 @@ class DownloadState:
 def print_banner():
     banner = f"""
 {Fore.CYAN}{Style.BRIGHT}
-   _____ _      _____    _____             _            
-  / ____| |    |_   _|  / ____|           | |           
- | |    | |      | |   | |     _ __   ___ | | _____ _ __
- | |    | |      | |   | |    | '_ \\ / _ \\| |/ / _ \\ '__|
- | |____| |____ _| |_  | |____| | | | (_) |   <  __/ |   
-  \\_____|______|_____|  \\_____|_| |_|\\___/|_|\\_\\___|_|   
+
+   _____                                  _      _ _     
+  / ____|                                | |    (_) |    
+ | (___   ___ _ __ __ _ _ __   ___ _ __  | |     _| |__  
+  \___ \ / __| '__/ _` | '_ \ / _ \ '__| | |    | | '_ \ 
+  ____) | (__| | | (_| | |_) |  __/ |    | |____| | |_) |
+ |_____/ \___|_|  \__,_| .__/ \___|_|    |______|_|_.__/ 
+                       | |                               
+                       |_|                               
+                                 
 {Style.RESET_ALL}
 {Fore.YELLOW}{'='*60}
-{Fore.GREEN}{'NYC TLC Trip Record Data Downloader'.center(60)}
+{Fore.GREEN}{'Scraper Lib'.center(60)}
 {Fore.YELLOW}{'='*60}{Fore.RESET}
 """
     print(banner)
@@ -268,6 +273,7 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
     # Fixed progress bar (disable dynamic postfix to avoid reprinting)
     bar_format = f"{Fore.GREEN}{{l_bar}}{Fore.BLUE}{{bar}}{Fore.RESET}{{r_bar}}"
 
+    # Pin the progress bar to the top of the output
     with tqdm(
         total=len(file_urls),
         desc=f"{Fore.YELLOW}Downloading Files{Fore.RESET}",
@@ -277,8 +283,11 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
         dynamic_ncols=False,
         leave=True,
         position=0,
-        ascii=" ░▒█"
+        ascii=" ░▒█",
+        file=sys.stdout,  # Ensure it always writes to the top
+        colour=None
     ) as pbar:
+        tqdm._instances.clear()  # Ensure only one bar is active and at the top
         for _ in range(max_concurrent):
             url = ray.get(queue.get_next.remote())
             if url:
@@ -290,13 +299,14 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
                 result = ray.get(ready[0])
                 results.append(result)
                 pbar.update(1)
-                # Print status only once per file, not as postfix
+                # Print status only once per file, not as postfix, and do NOT refresh the bar
                 if result['status'] == 'success':
-                    log_success(f"✔ Success: {os.path.basename(result['file'])}")
+                    print(f"{Fore.GREEN}[DONE]{Fore.RESET} Downloaded {Fore.BLUE}{os.path.basename(result['file'])}{Fore.RESET} "
+                          f"({result.get('size', 0)/1024/1024:.2f} MB) in {result.get('time', 0):.2f}s")
                 elif result['status'] == 'error':
-                    log_error(f"✖ Error: {os.path.basename(result['file'])} - {result.get('error', '')}")
+                    print(f"{Fore.RED}[FAIL]{Fore.RESET} {os.path.basename(result['file'])} - {result.get('error', '')}")
                 else:
-                    log_warning(f"↻ Skipped: {os.path.basename(result['file'])}")
+                    print(f"{Fore.YELLOW}[SKIP]{Fore.RESET} {os.path.basename(result['file'])}")
                 if result.get('delay'):
                     dynamic_delay = max(1.0, (dynamic_delay + result['delay']) / 2)
                 time.sleep(dynamic_delay * random.uniform(0.9, 1.1))
@@ -369,22 +379,13 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                     if os.path.isfile(temp_filename):
                         os.remove(temp_filename)
 
-                    # Progress bar for individual file download
-                    with tqdm(total=total_size, 
-                             unit='B', 
-                             unit_scale=True, 
-                             unit_divisor=1024,
-                             desc=f"{Fore.GREEN}Downloading{Fore.RESET} {os.path.basename(local_filename)}",
-                             leave=False,
-                             ncols=80) as file_bar:
-                        
-                        with open(temp_filename, 'wb') as f:
-                            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
-                                if not chunk:
-                                    continue
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                file_bar.update(len(chunk))
+                    # Download file without individual progress bar
+                    with open(temp_filename, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+                            if not chunk:
+                                continue
+                            f.write(chunk)
+                            downloaded += len(chunk)
                     
                     if total_size > 0 and downloaded != total_size:
                         raise Exception(f"Size mismatch: expected {total_size}, got {downloaded}")
@@ -514,24 +515,16 @@ def download_file(file_url, download_dir="data", state_handler=None):
                     if os.path.isfile(temp_filename):
                         os.remove(temp_filename)
 
-                    with tqdm(total=total_size,
-                              unit='B',
-                              unit_scale=True,
-                              unit_divisor=1024,
-                              desc=f"{Fore.GREEN}Downloading{Fore.RESET} {os.path.basename(local_filename)}",
-                              leave=False,
-                              ncols=80) as file_bar:
-
-                        with open(temp_filename, 'wb') as f:
-                            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
-                                if not chunk:
-                                    continue
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                file_bar.update(len(chunk))
+                    # Download file without individual progress bar
+                    with open(temp_filename, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+                            if not chunk:
+                                continue
+                            f.write(chunk)
+                            downloaded += len(chunk)
 
                     if total_size > 0 and downloaded != total_size:
-                        raise Exception(f"Size mismatch: expected {total_size, f"got {downloaded}"}")
+                        raise Exception(f"Size mismatch: expected {total_size}, got {downloaded}")
 
                 if os.path.exists(local_filename):
                     os.remove(local_filename)
