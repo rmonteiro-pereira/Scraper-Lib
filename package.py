@@ -133,19 +133,6 @@ class PlainFormatter(logging.Formatter):
             msg = f"{symbol} {msg}"
         return msg
 
-log_file = "taxi_extraction.log"
-file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='w')
-file_handler.setLevel(logging.INFO)
-file_formatter = PlainFormatter("[%(asctime)s] %(levelname)s %(message)s", datefmt='%Y-%m-%d %H:%M:%S')
-file_handler.setFormatter(file_formatter)
-logging.getLogger().addHandler(file_handler)
-
-# Configurations
-BASE_URL = "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page"
-DOWNLOAD_DIR = "tlc_data"
-INCREMENTAL = False
-
-
 # Default headers and user agents (used unless overridden)
 DEFAULT_HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -179,8 +166,7 @@ def get_user_agents(user_agents=None):
     """Return user agents list to be used for requests."""
     return user_agents if user_agents else DEFAULT_USER_AGENTS
 
-# LOG_FILE_BUFFER will be set per run, not global
-LOG_FILE_BUFFER = None
+
 
 class DownloadState:
     def __init__(self, state_file="download_state.json", incremental=True):
@@ -775,7 +761,7 @@ def generate_report(results, state, report_prefix="download_report"):
         json.dump(report, f, indent=2)
 
     # Log summary to console
-    log_section("DOWNLOAD SUMMARY")
+    log_section("FINAL SUMMARY")
     log_success(f"✔ Success: {report['summary']['success']}/{report['summary']['total_files']} ({report['summary']['success']/report['summary']['total_files']:.1%})")
     log_warning(f"↻ Skipped: {report['summary']['skipped']}")
     log_error(f"✖ Failed: {report['summary']['failed']}")
@@ -790,14 +776,6 @@ def generate_report(results, state, report_prefix="download_report"):
         log_info(f"Failed delay plot saved to: {report['failed_delay_plot']}")
 
     log_info(f"Full report saved to: {report_filename}")
-
-def setup_download_dir():
-    """Create download directory if it doesn't exist"""
-    if not os.path.exists(DOWNLOAD_DIR):
-        os.makedirs(DOWNLOAD_DIR)
-        log_success(f"[DIR] Created directory: {DOWNLOAD_DIR}")
-    else:
-        log_info(f"[DIR] Directory exists: {DOWNLOAD_DIR}")
 
 def extract_file_links(html_content, base_url, patterns):
     """Extract file download links from the page using given patterns"""
@@ -839,7 +817,7 @@ def scraper(
     console_log_file="console_log.txt",
     report_prefix="download_report"
 ):
-    global LOG_FILE_BUFFER
+    
     LOG_FILE_BUFFER = console_log_file
 
     # Use internal defaults unless overridden
@@ -899,21 +877,6 @@ def scraper(
     state_handler = DownloadState(state_file=state_file, incremental=incremental)
     results = parallel_download_with_ray(file_links, max_concurrent, download_dir, state_handler)
     log_section("PHASE 3: Results analysis")
-    success = sum(1 for r in results if r['status'] == 'success')
-    skipped = sum(1 for r in results if r['status'] == 'skipped')
-    errors = sum(1 for r in results if r['status'] == 'error')
-    total_size_gb = sum(
-        r['size'] for r in results 
-        if r['status'] == 'success' and 'size' in r
-    ) / (1024**3)
-    total_time = time.time() - start_time
-    log_section("FINAL SUMMARY")
-    log_success(f"✔ Downloaded: {success}")
-    log_warning(f"↻ Skipped: {skipped}")
-    log_error(f"✖ Errors: {errors}")
-    log_info(f"Total data: {total_size_gb:.2f} GB")
-    log_info(f"Total time: {total_time:.2f} seconds")
-    log_info(f"Throughput: {total_size_gb/(total_time/60):.2f} GB/min")
     generate_report(results, state_handler, report_prefix=report_prefix)
     ray.shutdown()
 
