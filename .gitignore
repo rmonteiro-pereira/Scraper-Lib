@@ -10,3 +10,4 @@ wheels/
 .venv
 /tlc_data
 *.log
+*.json
