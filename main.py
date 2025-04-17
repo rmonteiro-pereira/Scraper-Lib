@@ -14,12 +14,26 @@ import hashlib
 import numpy as np
 import ray
 from collections import deque
-# from pprint import pprint
 import portalocker
 from colorama import init, Fore, Style
 
 # Initialize colorama
 init(autoreset=True)
+
+# Configure logging for aesthetic output
+logging.basicConfig(
+    level=logging.INFO,
+    format=f"{Fore.LIGHTBLACK_EX}[%(asctime)s]{Fore.RESET} {Fore.CYAN}%(levelname)s{Fore.RESET} {Fore.WHITE}%(message)s{Fore.RESET}",
+    datefmt='%H:%M:%S'
+)
+
+# Add file handler to log all output to a file
+log_file = "taxi_extraction.log"
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", datefmt='%Y-%m-%d %H:%M:%S')
+file_handler.setFormatter(file_formatter)
+logging.getLogger().addHandler(file_handler)
 
 # Configurations
 BASE_URL = "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page"
@@ -45,15 +59,12 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    
     # Firefox (Windows/Mac/Linux)
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/120.0",
     "Mozilla/5.0 (X11; Linux i686; rv:109.0) Gecko/20100101 Firefox/120.0",
-    
     # Safari
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-    
     # Edge
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
 ]
@@ -205,17 +216,35 @@ class DownloadState:
         return self._cache
 
 def print_banner():
-    print(Fore.CYAN + r"""
+    banner = f"""
+{Fore.CYAN}{Style.BRIGHT}
    _____ _      _____    _____             _            
   / ____| |    |_   _|  / ____|           | |           
  | |    | |      | |   | |     _ __   ___ | | _____ _ __
- | |    | |      | |   | |    | '_ \ / _ \| |/ / _ \ '__|
+ | |    | |      | |   | |    | '_ \\ / _ \\| |/ / _ \\ '__|
  | |____| |____ _| |_  | |____| | | | (_) |   <  __/ |   
-  \_____|______|_____|  \_____|_| |_|\___/|_|\_\___|_|   
-    """)
-    print(Fore.YELLOW + "="*60)
-    print(Fore.GREEN + "NYC TLC Trip Record Data Downloader".center(60))
-    print(Fore.YELLOW + "="*60 + "\n")
+  \\_____|______|_____|  \\_____|_| |_|\\___/|_|\\_\\___|_|   
+{Style.RESET_ALL}
+{Fore.YELLOW}{'='*60}
+{Fore.GREEN}{'NYC TLC Trip Record Data Downloader'.center(60)}
+{Fore.YELLOW}{'='*60}{Fore.RESET}
+"""
+    print(banner)
+
+def log_info(msg):
+    logging.info(f"{Fore.CYAN}{msg}{Fore.RESET}")
+
+def log_success(msg):
+    logging.info(f"{Fore.GREEN}{msg}{Fore.RESET}")
+
+def log_warning(msg):
+    logging.warning(f"{Fore.YELLOW}{msg}{Fore.RESET}")
+
+def log_error(msg):
+    logging.error(f"{Fore.RED}{msg}{Fore.RESET}")
+
+def log_section(title):
+    print(f"\n{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}")
 
 def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data", state_handler=None):
     """Distributed queue version to avoid duplication"""
@@ -224,63 +253,56 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
     class Queue:
         def __init__(self, items):
             self.items = deque(items)
-        
         def get_next(self):
             if self.items:
                 return self.items.popleft()
             return None
-        
         def get_size(self):
             return len(self.items)
 
-    # Initialize queue
     queue = Queue.remote(file_urls)
     active_tasks = []
     results = []
-    dynamic_delay = 1.0  # Increased initial delay
-    
-    # Custom progress bar style
+    dynamic_delay = 1.0
+
+    # Fixed progress bar (disable dynamic postfix to avoid reprinting)
     bar_format = f"{Fore.GREEN}{{l_bar}}{Fore.BLUE}{{bar}}{Fore.RESET}{{r_bar}}"
-    
-    with tqdm(total=len(file_urls), 
-              desc=f"{Fore.YELLOW}Downloading Files{Fore.RESET}", 
-              bar_format=bar_format,
-              unit="file",
-              ncols=100) as pbar:
-        
-        # Send initial tasks
+
+    with tqdm(
+        total=len(file_urls),
+        desc=f"{Fore.YELLOW}Downloading Files{Fore.RESET}",
+        bar_format=bar_format,
+        unit="file",
+        ncols=100,
+        dynamic_ncols=False,
+        leave=True,
+        position=0,
+        ascii=" ░▒█"
+    ) as pbar:
         for _ in range(max_concurrent):
             url = ray.get(queue.get_next.remote())
             if url:
                 active_tasks.append(download_file_ray.remote(url, download_dir, state_handler))
-        
-        # Process results
+
         while active_tasks:
             ready, active_tasks = ray.wait(active_tasks, timeout=5.0)
-            
             if ready:
                 result = ray.get(ready[0])
                 results.append(result)
                 pbar.update(1)
-                
-                # Update status based on result
+                # Print status only once per file, not as postfix
                 if result['status'] == 'success':
-                    pbar.set_postfix_str(f"{Fore.GREEN}✔ Success{Fore.RESET}", refresh=True)
+                    log_success(f"✔ Success: {os.path.basename(result['file'])}")
                 elif result['status'] == 'error':
-                    pbar.set_postfix_str(f"{Fore.RED}✖ Error{Fore.RESET}", refresh=True)
+                    log_error(f"✖ Error: {os.path.basename(result['file'])} - {result.get('error', '')}")
                 else:
-                    pbar.set_postfix_str(f"{Fore.YELLOW}↻ Skipped{Fore.RESET}", refresh=True)
-                
-                # Dynamic delay adjustment
+                    log_warning(f"↻ Skipped: {os.path.basename(result['file'])}")
                 if result.get('delay'):
                     dynamic_delay = max(1.0, (dynamic_delay + result['delay']) / 2)
-                
-                # Get next item with randomized delay
                 time.sleep(dynamic_delay * random.uniform(0.9, 1.1))
                 next_url = ray.get(queue.get_next.remote())
                 if next_url:
                     active_tasks.append(download_file_ray.remote(next_url, download_dir, state_handler))
-    
     return results
 
 @ray.remote
@@ -509,7 +531,7 @@ def download_file(file_url, download_dir="data", state_handler=None):
                                 file_bar.update(len(chunk))
 
                     if total_size > 0 and downloaded != total_size:
-                        raise Exception(f"Size mismatch: expected {total_size}, got {downloaded}")
+                        raise Exception(f"Size mismatch: expected {total_size, f"got {downloaded}"}")
 
                 if os.path.exists(local_filename):
                     os.remove(local_filename)
@@ -751,53 +773,34 @@ def extract_file_links(html_content):
 
 def main():
     print_banner()
-    
-    print(f"{Fore.YELLOW}[INFO]{Fore.RESET} Ray version: {Fore.CYAN}{ray.__version__}{Fore.RESET}")
-    print(f"{Fore.YELLOW}[INFO]{Fore.RESET} Available CPUs: {Fore.CYAN}{ray.available_resources()['CPU']}{Fore.RESET}")
-    
-    # Initial setup
+    log_info(f"Ray version: {ray.__version__}")
+    log_info(f"Available CPUs: {ray.available_resources()['CPU']}")
     setup_download_dir()
-    
-    # Phase 1: Link collection
-    print(f"\n{Fore.CYAN}=== PHASE 1: Collecting file links ==={Fore.RESET}")
+    log_section("PHASE 1: Collecting file links")
     html_content = get_page_content(BASE_URL)
     if not html_content:
-        print(f"{Fore.RED}[ERROR]{Fore.RESET} Failed to access main page. Check connection and URL.")
+        log_error("Failed to access main page. Check connection and URL.")
         return
-
     file_links = extract_file_links(html_content)
     if not file_links:
-        print(f"{Fore.RED}[ERROR]{Fore.RESET} No valid links found. Check extraction pattern.")
+        log_error("No valid links found. Check extraction pattern.")
         return
-        
-    print(f"{Fore.GREEN}[INFO]{Fore.RESET} Found {Fore.CYAN}{len(file_links)}{Fore.RESET} files to download")
-    
-    # Phase 2: Parallel downloads with Ray
-    print(f"\n{Fore.CYAN}=== PHASE 2: Parallel downloads with Ray ==={Fore.RESET}")
+    log_success(f"Found {len(file_links)} files to download")
+    log_section("PHASE 2: Parallel downloads with Ray")
     start_time = time.time()
-    
     max_concurrent = min(8, int(ray.available_resources()['CPU'] * 1.5))
-    print(f"{Fore.YELLOW}[CONFIG]{Fore.RESET} Using {Fore.CYAN}{max_concurrent}{Fore.RESET} parallel workers")
-    
-    # Create state handler
+    log_info(f"Using {max_concurrent} parallel workers")
     state_handler = DownloadState(incremental=INCREMENTAL)
-
-    # Use distributed queue version
     results = parallel_download_with_ray(file_links, max_concurrent, "tlc_data", state_handler)
-    
-    # Phase 3: Results analysis
-    print(f"\n{Fore.CYAN}=== PHASE 3: Results analysis ==={Fore.RESET}")
+    log_section("PHASE 3: Results analysis")
     success = sum(1 for r in results if r['status'] == 'success')
     skipped = sum(1 for r in results if r['status'] == 'skipped')
     errors = sum(1 for r in results if r['status'] == 'error')
-    
     total_size_gb = sum(
         r['size'] for r in results 
         if r['status'] == 'success' and 'size' in r
     ) / (1024**3)
-    
     total_time = time.time() - start_time
-    
     print(f"\n{Fore.CYAN}=== FINAL SUMMARY ===")
     print(f"{Fore.GREEN}✔ Downloaded: {success}")
     print(f"{Fore.YELLOW}↻ Skipped: {skipped}")
@@ -805,12 +808,10 @@ def main():
     print(f"{Fore.BLUE}Total data: {total_size_gb:.2f} GB")
     print(f"Total time: {total_time:.2f} seconds")
     print(f"Throughput: {total_size_gb/(total_time/60):.2f} GB/min{Fore.RESET}")
-    
     generate_report(results, state_handler)
 
 if __name__ == "__main__":
-    # Initialize Ray only when run directly
-    print(f"{Fore.YELLOW}[INIT]{Fore.RESET} Starting Ray cluster...")
+    log_info("Starting Ray cluster...")
     ray.shutdown()
     ray.init(
         num_cpus=min(8, os.cpu_count()),
@@ -822,4 +823,4 @@ if __name__ == "__main__":
         main()
     finally:
         ray.shutdown()
-        print(f"{Fore.YELLOW}[END]{Fore.RESET} Ray cluster shutdown")
+        log_info("Ray cluster shutdown")
