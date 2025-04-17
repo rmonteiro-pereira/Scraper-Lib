@@ -49,7 +49,7 @@
 ## 🚀 Usage
 
 ```bash
-python texte2.py
+python main.py
 ```
 
 - All downloaded files will be saved in the `tlc_data` directory.
