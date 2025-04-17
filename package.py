@@ -182,7 +182,11 @@ def download_file_ray(file_url, headers, user_agents, download_dir="data", state
             except Exception:
                 pass
 
-def generate_report(results, state, report_prefix="download_report", logger=None):
+def generate_report(results, state, report_prefix="download_report", logger=None, output_dir="."):
+    # Ensure output directory exists
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     delays_success = state.state.get('delays_success', [])
     delays_failed = state.state.get('delays_failed', [])
     success_delays = [d['value'] for d in delays_success]
@@ -261,7 +265,7 @@ def generate_report(results, state, report_prefix="download_report", logger=None
             plt.grid(True, alpha=0.3)
             plt.legend()
             plt.tight_layout()
-            success_plot_filename = 'delay_success_analysis.png'
+            success_plot_filename = os.path.join(output_dir, 'delay_success_analysis.png')
             plt.savefig(success_plot_filename, dpi=300)
             plt.close()
             report['success_delay_plot'] = success_plot_filename
@@ -274,14 +278,16 @@ def generate_report(results, state, report_prefix="download_report", logger=None
             plt.grid(True, alpha=0.3)
             plt.legend()
             plt.tight_layout()
-            failed_plot_filename = 'delay_failed_analysis.png'
+            failed_plot_filename = os.path.join(output_dir, 'delay_failed_analysis.png')
             plt.savefig(failed_plot_filename, dpi=300)
             plt.close()
             report['failed_delay_plot'] = failed_plot_filename
     except ImportError:
         if logger:
             logger.warning("Matplotlib não disponível - visualizações não geradas")
-    report_filename = f"{report_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    report_filename = os.path.join(
+        output_dir, f"{report_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
     with open(report_filename, 'w') as f:
         json.dump(report, f, indent=2)
     if logger:
@@ -333,12 +339,13 @@ def scraper(
     headers=None,
     user_agents=None,
     state_file="download_state.json",
-    log_file="taxi_extraction.log",
-    console_log_file="console_log.log",
+    log_file="./logs/taxi_extraction.log",
+    console_log_file="./logs/console_log.log",
     report_prefix="download_report",
-    disable_logging=False,                # <-- NEW ARGUMENT
-    dataset_name=None,                    # <-- NEW ARGUMENT
-    disable_progress_bar=False,           # <-- NEW ARGUMENT
+    disable_logging=False,               
+    dataset_name=None,                   
+    disable_progress_bar=False,          
+    output_dir="./output",                      # <-- NEW ARG
 ):
     init(autoreset=True)
     yellow_title = "Starting download" if not dataset_name else f"Starting download of {dataset_name}"
@@ -361,8 +368,24 @@ def scraper(
 """
     logger = None
     if not disable_logging:
+        # Ensure log file directories exist
+        if log_file:
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        if console_log_file:
+            os.makedirs(os.path.dirname(console_log_file), exist_ok=True)
         logger = CustomLogger(banner=BANNER, console_log_file_path=console_log_file, file_log_path=log_file)
         print(BANNER)
+        
+    # Ensure output_dir exists (for report PNGs/JSON)
+    if output_dir:
+        output_dir_path = os.path.abspath(output_dir)
+        if not os.path.exists(output_dir_path):
+            os.makedirs(output_dir_path, exist_ok=True)
+    # Ensure state file directory exists
+    if state_file:
+        state_dir = os.path.dirname(state_file)
+        if state_dir and not os.path.exists(state_dir):
+            os.makedirs(state_dir, exist_ok=True)
 
     DEFAULT_HEADERS = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -447,7 +470,12 @@ def scraper(
     )
     if logger: 
         logger.section("PHASE 3: Results analysis")
-    generate_report(results, state_handler, report_prefix=report_prefix, logger=logger)
+    generate_report(
+        results, state_handler, 
+        report_prefix=report_prefix, 
+        logger=logger,
+        output_dir=output_dir         # <-- Pass to generate_report
+    )
     ray.shutdown()
 
 def cli():
@@ -468,6 +496,7 @@ def cli():
     parser.add_argument("--disable-logging", action="store_true", help="Disable all logging for production pipelines")  # <-- NEW ARG
     parser.add_argument("--dataset-name", type=str, default=None, help="Dataset name for banner")  # <-- NEW ARG
     parser.add_argument("--disable-progress-bar", action="store_true", help="Disable tqdm progress bar")  # <-- NEW ARG
+    parser.add_argument("--output-dir", type=str, default=".", help="Directory for report PNGs and JSON")  # <-- NEW ARG
     args = parser.parse_args()
 
     headers = None
@@ -480,6 +509,11 @@ def cli():
             user_agents = [line.strip() for line in f if line.strip()]
 
     if not args.disable_logging:
+        # Ensure log file directories exist
+        if args.log_file:
+            os.makedirs(os.path.dirname(args.log_file), exist_ok=True)
+        if args.console_log_file:
+            os.makedirs(os.path.dirname(args.console_log_file), exist_ok=True)
         logger = CustomLogger(console_log_file_path=args.console_log_file, file_log_path=args.log_file)
         logger.info("Starting Ray cluster...")
     else:
@@ -508,7 +542,8 @@ def cli():
             report_prefix=args.report_prefix,
             disable_logging=args.disable_logging,
             dataset_name=args.dataset_name,
-            disable_progress_bar=args.disable_progress_bar  # <-- Pass to scraper
+            disable_progress_bar=args.disable_progress_bar,
+            output_dir=args.output_dir      # <-- Pass to scraper
         )
     finally:
         ray.shutdown()
