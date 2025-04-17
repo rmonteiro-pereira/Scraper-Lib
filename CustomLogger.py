@@ -48,7 +48,9 @@ class CustomLogger(logging.Formatter):
             print(line[1])
 
     def append_log_to_file(self, line, filename=None):
-        if filename is not None:    
+        if filename is not None:
+            # Ensure parent directory exists
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
             with open(filename, "a", encoding="utf-8") as f:
                 f.write(self.strip_ansi(line) + "\n")
 
