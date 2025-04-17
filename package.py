@@ -953,7 +953,7 @@ def cli():
         ignore_reinit_error=True,
     )
     try:
-        main(
+        scraper(
             base_url=args.url,
             file_patterns=args.patterns,
             download_dir=args.dir,
