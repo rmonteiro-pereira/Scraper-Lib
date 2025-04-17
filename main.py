@@ -435,6 +435,146 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
             except Exception as e:
                 print(f"{Fore.YELLOW}[WARN]{Fore.RESET} Could not remove temp file {temp_filename}: {e}")
 
+def download_file(file_url, download_dir="data", state_handler=None):
+    CHUNK_SIZE = 5 * 1024 * 1024  # 5MB
+    INITIAL_DELAY = 1.0
+    MAX_DELAY = 60.0
+    MAX_RETRIES = 5
+    current_delay = INITIAL_DELAY
+    temp_filename = None
+
+    try:
+        # Check if file already downloaded
+        if state_handler and state_handler.is_completed(file_url):
+            print(f"{Fore.CYAN}[SKIP]{Fore.RESET} Already downloaded: {Fore.BLUE}{file_url}{Fore.RESET}")
+            return {"status": "skipped", "file": file_url, "reason": "already_completed"}
+
+        print(f"{Fore.YELLOW}[TRY]{Fore.RESET} Downloading: {Fore.BLUE}{file_url}{Fore.RESET}")
+
+        local_filename = os.path.join(download_dir, file_url.split('/')[-1])
+        headers = HEADERS.copy()
+        headers.update({
+            'User-Agent': random.choice(USER_AGENTS),
+            'Referer': BASE_URL
+        })
+
+        timestamp = int(time.time())
+        temp_filename = f"{local_filename}.{timestamp}.tmp"
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                # Exponential backoff with jitter
+                if attempt > 0:
+                    current_delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
+                    current_delay *= random.uniform(0.8, 1.2)
+                    print(f"{Fore.MAGENTA}[WAIT]{Fore.RESET} Attempt {attempt + 1}: Waiting {Fore.GREEN}{current_delay:.1f}s{Fore.RESET}")
+                    time.sleep(current_delay)
+
+                # Create a new session for each attempt
+                session = requests.Session()
+                session.headers.update(headers)
+
+                start_time = time.time()
+                with session.get(file_url, stream=True, timeout=(30, 60)) as r:
+                    if r.status_code == 403:
+                        raise Exception("403 Forbidden - Potential blocking detected")
+                    r.raise_for_status()
+
+                    if state_handler:
+                        state_handler.add_delay(current_delay, success=True)
+
+                    if r.url != file_url:
+                        print(f"{Fore.CYAN}[REDIR]{Fore.RESET} {file_url} → {r.url}")
+
+                    total_size = int(r.headers.get('content-length', 0))
+                    downloaded = 0
+
+                    if os.path.isfile(temp_filename):
+                        os.remove(temp_filename)
+
+                    with tqdm(total=total_size,
+                              unit='B',
+                              unit_scale=True,
+                              unit_divisor=1024,
+                              desc=f"{Fore.GREEN}Downloading{Fore.RESET} {os.path.basename(local_filename)}",
+                              leave=False,
+                              ncols=80) as file_bar:
+
+                        with open(temp_filename, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+                                if not chunk:
+                                    continue
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                file_bar.update(len(chunk))
+
+                    if total_size > 0 and downloaded != total_size:
+                        raise Exception(f"Size mismatch: expected {total_size}, got {downloaded}")
+
+                if os.path.exists(local_filename):
+                    os.remove(local_filename)
+
+                os.rename(temp_filename, local_filename)
+                download_time = time.time() - start_time
+
+                if state_handler:
+                    state_handler.add_completed(file_url, local_filename, downloaded)
+
+                print(f"{Fore.GREEN}[DONE]{Fore.RESET} Downloaded {Fore.BLUE}{os.path.basename(local_filename)}{Fore.RESET} "
+                      f"({downloaded/1024/1024:.2f} MB) in {download_time:.2f}s")
+
+                return {
+                    "status": "success",
+                    "file": local_filename,
+                    "size": downloaded,
+                    "time": download_time,
+                    "speed": downloaded / (download_time + 1e-6),
+                    "attempts": attempt + 1
+                }
+
+            except Exception as e:
+                if state_handler:
+                    state_handler.add_delay(current_delay, success=False)
+
+                if "403" in str(e):
+                    # Rotate user agent for 403 errors
+                    headers['User-Agent'] = random.choice(USER_AGENTS)
+                    print(f"{Fore.RED}[403]{Fore.RESET} Rotating User-Agent and retrying...")
+
+                if attempt >= MAX_RETRIES:
+                    raise
+
+                error_msg = str(e)
+                if "SSL" in error_msg:
+                    error_msg = "SSL Error - retrying with different parameters"
+                elif "Connection" in error_msg:
+                    error_msg = "Connection Error - retrying"
+
+                print(f"{Fore.YELLOW}[RETRY]{Fore.RESET} Attempt {attempt + 1} failed: {Fore.RED}{error_msg}{Fore.RESET}")
+
+    except Exception as e:
+        if state_handler:
+            state_handler.add_failed(file_url, e)
+
+        print(f"{Fore.RED}[FAIL]{Fore.RESET} Failed to download {Fore.BLUE}{file_url}{Fore.RESET} after {MAX_RETRIES} attempts: "
+              f"{Fore.RED}{str(e)}{Fore.RESET}")
+
+        return {
+            "status": "error",
+            "file": file_url,
+            "error": str(e),
+            "retry_count": state_handler.state['failed'].get(
+                state_handler.get_file_id(file_url), {}).get('retries', 0) if state_handler else 0,
+            "delay": current_delay,
+            "attempts": attempt + 1
+        }
+    finally:
+        if temp_filename and os.path.exists(temp_filename):
+            try:
+                os.remove(temp_filename)
+            except Exception as e:
+                print(f"{Fore.YELLOW}[WARN]{Fore.RESET} Could not remove temp file {temp_filename}: {e}")
+
 def generate_report(results, state):
     """Generate comprehensive statistics report with visualization"""
     # Get all delay data
