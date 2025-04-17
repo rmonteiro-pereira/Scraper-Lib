@@ -28,11 +28,29 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
-# Add file handler to log all output to a file
+# Add file handler to log all output to a file with improved formatting (no ANSI codes)
+class PlainFormatter(logging.Formatter):
+    COLORS = {
+        'INFO': '✔',
+        'WARNING': '⚠',
+        'ERROR': '✖',
+        'CRITICAL': '‼',
+        'DEBUG': '•'
+    }
+    def format(self, record):
+        # Remove ANSI codes and add emoji/symbols
+        msg = super().format(record)
+        for code in ['\033[31m', '\033[32m', '\033[33m', '\033[36m', '\033[39m', '\033[0m', '\033[1m']:
+            msg = msg.replace(code, '')
+        symbol = self.COLORS.get(record.levelname, '')
+        if symbol and not msg.startswith(symbol):
+            msg = f"{symbol} {msg}"
+        return msg
+
 log_file = "taxi_extraction.log"
 file_handler = logging.FileHandler(log_file, encoding='utf-8')
 file_handler.setLevel(logging.INFO)
-file_formatter = logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", datefmt='%Y-%m-%d %H:%M:%S')
+file_formatter = PlainFormatter("[%(asctime)s] %(levelname)s %(message)s", datefmt='%Y-%m-%d %H:%M:%S')
 file_handler.setFormatter(file_formatter)
 logging.getLogger().addHandler(file_handler)
 
@@ -217,9 +235,8 @@ class DownloadState:
         return self._cache
 
 def print_banner():
-    banner = f"""
+    banner = rf"""
 {Fore.CYAN}{Style.BRIGHT}
-
    _____                                  _      _ _     
   / ____|                                | |    (_) |    
  | (___   ___ _ __ __ _ _ __   ___ _ __  | |     _| |__  
@@ -228,7 +245,6 @@ def print_banner():
  |_____/ \___|_|  \__,_| .__/ \___|_|    |______|_|_.__/ 
                        | |                               
                        |_|                               
-                                 
 {Style.RESET_ALL}
 {Fore.YELLOW}{'='*60}
 {Fore.GREEN}{'Scraper Lib'.center(60)}
@@ -252,7 +268,6 @@ def log_section(title):
     print(f"\n{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}")
 
 def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data", state_handler=None):
-    """Distributed queue version to avoid duplication"""
     random.shuffle(file_urls)
     @ray.remote
     class Queue:
@@ -262,18 +277,14 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
             if self.items:
                 return self.items.popleft()
             return None
-        def get_size(self):
-            return len(self.items)
 
     queue = Queue.remote(file_urls)
     active_tasks = []
     results = []
     dynamic_delay = 1.0
 
-    # Fixed progress bar (disable dynamic postfix to avoid reprinting)
     bar_format = f"{Fore.GREEN}{{l_bar}}{Fore.BLUE}{{bar}}{Fore.RESET}{{r_bar}}"
 
-    # Pin the progress bar to the top of the output
     with tqdm(
         total=len(file_urls),
         desc=f"{Fore.YELLOW}Downloading Files{Fore.RESET}",
@@ -284,10 +295,10 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
         leave=True,
         position=0,
         ascii=" ░▒█",
-        file=sys.stdout,  # Ensure it always writes to the top
+        file=sys.stdout,
         colour=None
     ) as pbar:
-        tqdm._instances.clear()  # Ensure only one bar is active and at the top
+        tqdm._instances.clear()
         for _ in range(max_concurrent):
             url = ray.get(queue.get_next.remote())
             if url:
@@ -299,14 +310,14 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
                 result = ray.get(ready[0])
                 results.append(result)
                 pbar.update(1)
-                # Print status only once per file, not as postfix, and do NOT refresh the bar
+                # Use tqdm.write to keep the bar on top
                 if result['status'] == 'success':
-                    print(f"{Fore.GREEN}[DONE]{Fore.RESET} Downloaded {Fore.BLUE}{os.path.basename(result['file'])}{Fore.RESET} "
-                          f"({result.get('size', 0)/1024/1024:.2f} MB) in {result.get('time', 0):.2f}s")
+                    tqdm.write(f"{Fore.GREEN}[DONE]{Fore.RESET} Downloaded {Fore.BLUE}{os.path.basename(result['file'])}{Fore.RESET} "
+                               f"({result.get('size', 0)/1024/1024:.2f} MB) in {result.get('time', 0):.2f}s")
                 elif result['status'] == 'error':
-                    print(f"{Fore.RED}[FAIL]{Fore.RESET} {os.path.basename(result['file'])} - {result.get('error', '')}")
+                    tqdm.write(f"{Fore.RED}[FAIL]{Fore.RESET} {os.path.basename(result['file'])} - {result.get('error', '')}")
                 else:
-                    print(f"{Fore.YELLOW}[SKIP]{Fore.RESET} {os.path.basename(result['file'])}")
+                    tqdm.write(f"{Fore.YELLOW}[SKIP]{Fore.RESET} {os.path.basename(result['file'])}")
                 if result.get('delay'):
                     dynamic_delay = max(1.0, (dynamic_delay + result['delay']) / 2)
                 time.sleep(dynamic_delay * random.uniform(0.9, 1.1))
