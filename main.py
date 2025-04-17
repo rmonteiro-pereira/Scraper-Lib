@@ -3,6 +3,8 @@ import logging
 from bs4 import BeautifulSoup
 import os
 os.environ['RAY_DEDUP_LOGS'] = "0"
+os.environ["RAY_SILENT_MODE"] = "1"
+
 from tqdm import tqdm
 from urllib.parse import urljoin
 import time
@@ -18,15 +20,47 @@ from collections import deque
 import portalocker
 from colorama import init, Fore, Style
 
+# Add at the top, after imports
+LOG_BUFFER = []
+
+BANNER = rf"""
+{Fore.CYAN}{Style.BRIGHT}
+   _____                                  _      _ _     
+  / ____|                                | |    (_) |    
+ | (___   ___ _ __ __ _ _ __   ___ _ __  | |     _| |__  
+  \___ \ / __| '__/ _` | '_ \ / _ \ '__| | |    | | '_ \ 
+  ____) | (__| | | (_| | |_) |  __/ |    | |____| | |_) |
+ |_____/ \___|_|  \__,_| .__/ \___|_|    |______|_|_.__/ 
+                       | |                               
+                       |_|                               
+{Style.RESET_ALL}
+{Fore.YELLOW}{'='*60}
+{Fore.GREEN}{'Scraper Lib'.center(60)}
+{Fore.YELLOW}{'='*60}{Fore.RESET}
+"""
+
+def redraw_logs():
+    # Clear the terminal (Windows and ANSI terminals)
+    if os.name == 'nt':
+        os.system('cls')
+    else:
+        sys.stdout.write('\033[2J\033[H')
+        sys.stdout.flush()
+
+    # Redraw all logs
+    for line in LOG_BUFFER:
+        print(line)
+    pass
+
 # Initialize colorama
 init(autoreset=True)
 
-# Configure logging for aesthetic output
-logging.basicConfig(
-    level=logging.INFO,
-    format=f"{Fore.LIGHTBLACK_EX}[%(asctime)s]{Fore.RESET} {Fore.CYAN}%(levelname)s{Fore.RESET} {Fore.WHITE}%(message)s{Fore.RESET}",
-    datefmt='%H:%M:%S'
-)
+# # Configure logging for aesthetic output
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format=f"1\n{Fore.LIGHTBLACK_EX}[%(asctime)s]{Fore.RESET} {Fore.CYAN}%(levelname)s{Fore.RESET} {Fore.WHITE}%(message)s{Fore.RESET}",
+#     datefmt='%H:%M:%S'
+# )
 
 # Add file handler to log all output to a file with improved formatting (no ANSI codes)
 class PlainFormatter(logging.Formatter):
@@ -48,7 +82,7 @@ class PlainFormatter(logging.Formatter):
         return msg
 
 log_file = "taxi_extraction.log"
-file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='w')  # <-- mode='w' erases file each run
+file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='w')
 file_handler.setLevel(logging.INFO)
 file_formatter = PlainFormatter("[%(asctime)s] %(levelname)s %(message)s", datefmt='%Y-%m-%d %H:%M:%S')
 file_handler.setFormatter(file_formatter)
@@ -235,37 +269,34 @@ class DownloadState:
         return self._cache
 
 def print_banner():
-    banner = rf"""
-{Fore.CYAN}{Style.BRIGHT}
-   _____                                  _      _ _     
-  / ____|                                | |    (_) |    
- | (___   ___ _ __ __ _ _ __   ___ _ __  | |     _| |__  
-  \___ \ / __| '__/ _` | '_ \ / _ \ '__| | |    | | '_ \ 
-  ____) | (__| | | (_| | |_) |  __/ |    | |____| | |_) |
- |_____/ \___|_|  \__,_| .__/ \___|_|    |______|_|_.__/ 
-                       | |                               
-                       |_|                               
-{Style.RESET_ALL}
-{Fore.YELLOW}{'='*60}
-{Fore.GREEN}{'Scraper Lib'.center(60)}
-{Fore.YELLOW}{'='*60}{Fore.RESET}
-"""
-    tqdm.write(banner)
+    # No need to print here, handled by redraw_logs
+    print(BANNER)
+    pass
 
 def log_info(msg):
-    logging.info(f"{Fore.CYAN}{msg}{Fore.RESET}")
+    line = f"{Fore.CYAN}{msg}{Fore.RESET}"
+    LOG_BUFFER.append(line)
+    redraw_logs()
 
 def log_success(msg):
-    logging.info(f"{Fore.GREEN}{msg}{Fore.RESET}")
+    line = f"{Fore.GREEN}{msg}{Fore.RESET}"
+    LOG_BUFFER.append(line)
+    redraw_logs()
 
 def log_warning(msg):
-    logging.warning(f"{Fore.YELLOW}{msg}{Fore.RESET}")
+    line = f"{Fore.YELLOW}{msg}{Fore.RESET}"
+    LOG_BUFFER.append(line)
+    redraw_logs()
 
 def log_error(msg):
-    logging.error(f"{Fore.RED}{msg}{Fore.RESET}")
+    line = f"{Fore.RED}{msg}{Fore.RESET}"
+    LOG_BUFFER.append(line)
+    redraw_logs()
 
 def log_section(title):
-    tqdm.write(f"\n{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}")
+    line = f"\n{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}"
+    LOG_BUFFER.append(line)
+    redraw_logs()
 
 def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data", state_handler=None):
     random.shuffle(file_urls)
@@ -310,14 +341,14 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
                 result = ray.get(ready[0])
                 results.append(result)
                 pbar.update(1)
-                # Use tqdm.write for all logs to keep the bar fixed at the top
+                # Use custom log functions for all logs
                 if result['status'] == 'success':
-                    tqdm.write(f"{Fore.GREEN}[DONE]{Fore.RESET} Downloaded {Fore.BLUE}{os.path.basename(result['file'])}{Fore.RESET} "
-                               f"({result.get('size', 0)/1024/1024:.2f} MB) in {result.get('time', 0):.2f}s")
+                    log_success(f"[DONE] Downloaded {os.path.basename(result['file'])} "
+                                f"({result.get('size', 0)/1024/1024:.2f} MB) in {result.get('time', 0):.2f}s")
                 elif result['status'] == 'error':
-                    tqdm.write(f"{Fore.RED}[FAIL]{Fore.RESET} {os.path.basename(result['file'])} - {result.get('error', '')}")
+                    log_error(f"[FAIL] {os.path.basename(result['file'])} - {result.get('error', '')}")
                 else:
-                    tqdm.write(f"{Fore.YELLOW}[SKIP]{Fore.RESET} {os.path.basename(result['file'])}")
+                    log_warning(f"[SKIP] {os.path.basename(result['file'])}")
                 if result.get('delay'):
                     dynamic_delay = max(1.0, (dynamic_delay + result['delay']) / 2)
                 time.sleep(dynamic_delay * random.uniform(0.9, 1.1))
@@ -338,10 +369,10 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
     try:
         # Check if file already downloaded
         if state_handler and state_handler.is_completed(file_url):
-            tqdm.write(f"{Fore.CYAN}[SKIP]{Fore.RESET} Already downloaded: {Fore.BLUE}{file_url}{Fore.RESET}")
+            log_info(f"[SKIP] Already downloaded: {file_url}")
             return {"status": "skipped", "file": file_url, "reason": "already_completed"}
         
-        tqdm.write(f"{Fore.YELLOW}[TRY]{Fore.RESET} Downloading: {Fore.BLUE}{file_url}{Fore.RESET}")
+        log_info(f"[TRY] Downloading: {file_url}")
         
         # Configure download
         local_filename = os.path.join(download_dir, file_url.split('/')[-1])
@@ -363,7 +394,7 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                 if attempt > 0:
                     current_delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
                     current_delay *= random.uniform(0.8, 1.2)  # Add jitter
-                    tqdm.write(f"{Fore.MAGENTA}[WAIT]{Fore.RESET} Attempt {attempt + 1}: Waiting {Fore.GREEN}{current_delay:.1f}s{Fore.RESET}")
+                    log_info(f"[WAIT] Attempt {attempt + 1}: Waiting {current_delay:.1f}s")
                     time.sleep(current_delay)
 
                 # Create a new session for each attempt
@@ -381,7 +412,7 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                         state_handler.add_delay(current_delay, success=True)
                     
                     if r.url != file_url:
-                        tqdm.write(f"{Fore.CYAN}[REDIR]{Fore.RESET} {file_url} → {r.url}")
+                        log_info(f"[REDIR] {file_url} → {r.url}")
 
                     total_size = int(r.headers.get('content-length', 0))
                     downloaded = 0
@@ -413,8 +444,8 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                 if state_handler:
                     state_handler.add_completed(file_url, local_filename, downloaded)
 
-                tqdm.write(f"{Fore.GREEN}[DONE]{Fore.RESET} Downloaded {Fore.BLUE}{os.path.basename(local_filename)}{Fore.RESET} "
-                      f"({downloaded/1024/1024:.2f} MB) in {download_time:.2f}s")
+                log_success(f"[DONE] Downloaded {os.path.basename(local_filename)} "
+                            f"({downloaded/1024/1024:.2f} MB) in {download_time:.2f}s")
                 
                 return {
                     "status": "success",
@@ -432,7 +463,7 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                 if "403" in str(e):
                     # Rotate user agent for 403 errors
                     headers['User-Agent'] = random.choice(USER_AGENTS)
-                    tqdm.write(f"{Fore.RED}[403]{Fore.RESET} Rotating User-Agent and retrying...")
+                    log_warning("[403] Rotating User-Agent and retrying...")
                 
                 if attempt >= MAX_RETRIES:
                     raise
@@ -443,15 +474,14 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                 elif "Connection" in error_msg:
                     error_msg = "Connection Error - retrying"
                 
-                tqdm.write(f"{Fore.YELLOW}[RETRY]{Fore.RESET} Attempt {attempt + 1} failed: {Fore.RED}{error_msg}{Fore.RESET}")
+                log_warning(f"[RETRY] Attempt {attempt + 1} failed: {error_msg}")
 
     except Exception as e:
         # Record failure
         if state_handler:
             state_handler.add_failed(file_url, e)
         
-        tqdm.write(f"{Fore.RED}[FAIL]{Fore.RESET} Failed to download {Fore.BLUE}{file_url}{Fore.RESET} after {MAX_RETRIES} attempts: "
-              f"{Fore.RED}{str(e)}{Fore.RESET}")
+        log_error(f"[FAIL] Failed to download {file_url} after {MAX_RETRIES} attempts: {str(e)}")
         
         return {
             "status": "error",
@@ -467,7 +497,7 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
             try:
                 os.remove(temp_filename)
             except Exception as e:
-                tqdm.write(f"{Fore.YELLOW}[WARN]{Fore.RESET} Could not remove temp file {temp_filename}: {e}")
+                log_warning(f"[WARN] Could not remove temp file {temp_filename}: {e}")
 
 def download_file(file_url, download_dir="data", state_handler=None):
     CHUNK_SIZE = 5 * 1024 * 1024  # 5MB
@@ -480,10 +510,10 @@ def download_file(file_url, download_dir="data", state_handler=None):
     try:
         # Check if file already downloaded
         if state_handler and state_handler.is_completed(file_url):
-            tqdm.write(f"{Fore.CYAN}[SKIP]{Fore.RESET} Already downloaded: {Fore.BLUE}{file_url}{Fore.RESET}")
+            log_info(f"[SKIP] Already downloaded: {file_url}")
             return {"status": "skipped", "file": file_url, "reason": "already_completed"}
 
-        tqdm.write(f"{Fore.YELLOW}[TRY]{Fore.RESET} Downloading: {Fore.BLUE}{file_url}{Fore.RESET}")
+        log_info(f"[TRY] Downloading: {file_url}")
 
         local_filename = os.path.join(download_dir, file_url.split('/')[-1])
         headers = HEADERS.copy()
@@ -501,7 +531,7 @@ def download_file(file_url, download_dir="data", state_handler=None):
                 if attempt > 0:
                     current_delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
                     current_delay *= random.uniform(0.8, 1.2)
-                    tqdm.write(f"{Fore.MAGENTA}[WAIT]{Fore.RESET} Attempt {attempt + 1}: Waiting {Fore.GREEN}{current_delay:.1f}s{Fore.RESET}")
+                    log_info(f"[WAIT] Attempt {attempt + 1}: Waiting {current_delay:.1f}s")
                     time.sleep(current_delay)
 
                 # Create a new session for each attempt
@@ -518,7 +548,7 @@ def download_file(file_url, download_dir="data", state_handler=None):
                         state_handler.add_delay(current_delay, success=True)
 
                     if r.url != file_url:
-                        tqdm.write(f"{Fore.CYAN}[REDIR]{Fore.RESET} {file_url} → {r.url}")
+                        log_info(f"[REDIR] {file_url} → {r.url}")
 
                     total_size = int(r.headers.get('content-length', 0))
                     downloaded = 0
@@ -546,8 +576,8 @@ def download_file(file_url, download_dir="data", state_handler=None):
                 if state_handler:
                     state_handler.add_completed(file_url, local_filename, downloaded)
 
-                tqdm.write(f"{Fore.GREEN}[DONE]{Fore.RESET} Downloaded {Fore.BLUE}{os.path.basename(local_filename)}{Fore.RESET} "
-                      f"({downloaded/1024/1024:.2f} MB) in {download_time:.2f}s")
+                log_success(f"[DONE] Downloaded {os.path.basename(local_filename)} "
+                            f"({downloaded/1024/1024:.2f} MB) in {download_time:.2f}s")
 
                 return {
                     "status": "success",
@@ -565,7 +595,7 @@ def download_file(file_url, download_dir="data", state_handler=None):
                 if "403" in str(e):
                     # Rotate user agent for 403 errors
                     headers['User-Agent'] = random.choice(USER_AGENTS)
-                    tqdm.write(f"{Fore.RED}[403]{Fore.RESET} Rotating User-Agent and retrying...")
+                    log_warning("[403] Rotating User-Agent and retrying...")
 
                 if attempt >= MAX_RETRIES:
                     raise
@@ -576,14 +606,13 @@ def download_file(file_url, download_dir="data", state_handler=None):
                 elif "Connection" in error_msg:
                     error_msg = "Connection Error - retrying"
 
-                tqdm.write(f"{Fore.YELLOW}[RETRY]{Fore.RESET} Attempt {attempt + 1} failed: {Fore.RED}{error_msg}{Fore.RESET}")
+                log_warning(f"[RETRY] Attempt {attempt + 1} failed: {error_msg}")
 
     except Exception as e:
         if state_handler:
             state_handler.add_failed(file_url, e)
 
-        tqdm.write(f"{Fore.RED}[FAIL]{Fore.RESET} Failed to download {Fore.BLUE}{file_url}{Fore.RESET} after {MAX_RETRIES} attempts: "
-              f"{Fore.RED}{str(e)}{Fore.RESET}")
+        log_error(f"[FAIL] Failed to download {file_url} after {MAX_RETRIES} attempts: {str(e)}")
 
         return {
             "status": "error",
@@ -599,7 +628,7 @@ def download_file(file_url, download_dir="data", state_handler=None):
             try:
                 os.remove(temp_filename)
             except Exception as e:
-                tqdm.write(f"{Fore.YELLOW}[WARN]{Fore.RESET} Could not remove temp file {temp_filename}: {e}")
+                log_warning(f"[WARN] Could not remove temp file {temp_filename}: {e}")
 
 def generate_report(results, state):
     """Generate comprehensive statistics report with visualization"""
@@ -711,37 +740,37 @@ def generate_report(results, state):
             report['failed_delay_plot'] = failed_plot_filename
 
     except ImportError:
-        tqdm.write("Matplotlib não disponível - visualizações não geradas")
+        log_warning("Matplotlib não disponível - visualizações não geradas")
 
     # Save JSON report
     report_filename = f"download_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(report_filename, 'w') as f:
         json.dump(report, f, indent=2)
 
-    # tqdm.write summary to console
-    tqdm.write(f"\n{Fore.CYAN}=== {Style.BRIGHT}DOWNLOAD SUMMARY{Style.NORMAL} ===")
-    tqdm.write(f"{Fore.GREEN}✔ Success: {report['summary']['success']}/{report['summary']['total_files']} ({report['summary']['success']/report['summary']['total_files']:.1%})")
-    tqdm.write(f"{Fore.YELLOW}↻ Skipped: {report['summary']['skipped']}")
-    tqdm.write(f"{Fore.RED}✖ Failed: {report['summary']['failed']}")
-    tqdm.write(f"{Fore.BLUE}Total data: {report['summary']['total_bytes']/(1024**3):.2f} GB")
-    tqdm.write(f"Throughput: {report['summary']['throughput_gbps']:.2f} Gbps")
-    tqdm.write(f"Time elapsed: {report['summary']['time_elapsed']}{Fore.RESET}")
+    # Log summary to console
+    log_section("DOWNLOAD SUMMARY")
+    log_success(f"✔ Success: {report['summary']['success']}/{report['summary']['total_files']} ({report['summary']['success']/report['summary']['total_files']:.1%})")
+    log_warning(f"↻ Skipped: {report['summary']['skipped']}")
+    log_error(f"✖ Failed: {report['summary']['failed']}")
+    log_info(f"Total data: {report['summary']['total_bytes']/(1024**3):.2f} GB")
+    log_info(f"Throughput: {report['summary']['throughput_gbps']:.2f} Gbps")
+    log_info(f"Time elapsed: {report['summary']['time_elapsed']}")
 
-    # tqdm.write visualization info
+    # Log visualization info
     if 'success_delay_plot' in report:
-        tqdm.write(f"\n{Fore.CYAN}Success delay plot saved to: {report['success_delay_plot']}{Fore.RESET}")
+        log_info(f"Success delay plot saved to: {report['success_delay_plot']}")
     if 'failed_delay_plot' in report:
-        tqdm.write(f"{Fore.CYAN}Failed delay plot saved to: {report['failed_delay_plot']}{Fore.RESET}")
+        log_info(f"Failed delay plot saved to: {report['failed_delay_plot']}")
 
-    tqdm.write(f"\n{Fore.CYAN}Full report saved to: {report_filename}{Fore.RESET}")
+    log_info(f"Full report saved to: {report_filename}")
 
 def setup_download_dir():
     """Create download directory if it doesn't exist"""
     if not os.path.exists(DOWNLOAD_DIR):
         os.makedirs(DOWNLOAD_DIR)
-        tqdm.write(f"{Fore.GREEN}[DIR]{Fore.RESET} Created directory: {Fore.BLUE}{DOWNLOAD_DIR}{Fore.RESET}")
+        log_success(f"[DIR] Created directory: {DOWNLOAD_DIR}")
     else:
-        tqdm.write(f"{Fore.CYAN}[DIR]{Fore.RESET} Directory exists: {Fore.BLUE}{DOWNLOAD_DIR}{Fore.RESET}")
+        log_info(f"[DIR] Directory exists: {DOWNLOAD_DIR}")
 
 def get_page_content(url):
     """Get HTML content of the page with better header handling"""
@@ -756,7 +785,7 @@ def get_page_content(url):
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        tqdm.write(f"{Fore.RED}[ERROR]{Fore.RESET} Error accessing page: {e}")
+        log_error(f"[ERROR] Error accessing page: {e}")
         return None
 
 def extract_file_links(html_content):
@@ -776,7 +805,6 @@ def extract_file_links(html_content):
     return file_links
 
 def main():
-    print_banner()
     log_info(f"Ray version: {ray.__version__}")
     log_info(f"Available CPUs: {ray.available_resources()['CPU']}")
     setup_download_dir()
@@ -805,13 +833,13 @@ def main():
         if r['status'] == 'success' and 'size' in r
     ) / (1024**3)
     total_time = time.time() - start_time
-    tqdm.write(f"\n{Fore.CYAN}=== FINAL SUMMARY ===")
-    tqdm.write(f"{Fore.GREEN}✔ Downloaded: {success}")
-    tqdm.write(f"{Fore.YELLOW}↻ Skipped: {skipped}")
-    tqdm.write(f"{Fore.RED}✖ Errors: {errors}")
-    tqdm.write(f"{Fore.BLUE}Total data: {total_size_gb:.2f} GB")
-    tqdm.write(f"Total time: {total_time:.2f} seconds")
-    tqdm.write(f"Throughput: {total_size_gb/(total_time/60):.2f} GB/min{Fore.RESET}")
+    log_section("FINAL SUMMARY")
+    log_success(f"✔ Downloaded: {success}")
+    log_warning(f"↻ Skipped: {skipped}")
+    log_error(f"✖ Errors: {errors}")
+    log_info(f"Total data: {total_size_gb:.2f} GB")
+    log_info(f"Total time: {total_time:.2f} seconds")
+    log_info(f"Throughput: {total_size_gb/(total_time/60)::.2f} GB/min")
     generate_report(results, state_handler)
 
 if __name__ == "__main__":
@@ -820,8 +848,9 @@ if __name__ == "__main__":
     ray.init(
         num_cpus=min(8, os.cpu_count()),
         include_dashboard=False,
-        logging_level=logging.WARNING,
-        ignore_reinit_error=True
+        logging_level=logging.ERROR,
+        ignore_reinit_error=True,
+        # log_to_driver=False
     )
     try:
         main()
