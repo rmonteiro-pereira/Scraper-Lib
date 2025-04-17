@@ -11,3 +11,4 @@ wheels/
 /tlc_data
 *.log
 *.json
+*.txt

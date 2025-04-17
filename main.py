@@ -19,6 +19,7 @@ import ray
 from collections import deque
 import portalocker
 from colorama import init, Fore, Style
+import re
 
 # Add at the top, after imports
 LOG_BUFFER = []
@@ -46,6 +47,8 @@ def redraw_logs():
     else:
         sys.stdout.write('\033[2J\033[H')
         sys.stdout.flush()
+    # Always print the banner first
+    print(BANNER)
 
     # Redraw all logs
     for line in LOG_BUFFER:
@@ -273,29 +276,44 @@ def print_banner():
     print(BANNER)
     pass
 
+LOG_FILE_BUFFER = "console_log.txt"
+
+def strip_ansi(line):
+    ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+    return ansi_escape.sub('', line)
+
+def append_log_to_file(line, filename=LOG_FILE_BUFFER):
+    with open(filename, "a", encoding="utf-8") as f:
+        f.write(strip_ansi(line) + "\n")
+
 def log_info(msg):
     line = f"{Fore.CYAN}{msg}{Fore.RESET}"
     LOG_BUFFER.append(line)
+    append_log_to_file(line)
     redraw_logs()
 
 def log_success(msg):
     line = f"{Fore.GREEN}{msg}{Fore.RESET}"
     LOG_BUFFER.append(line)
+    append_log_to_file(line)
     redraw_logs()
 
 def log_warning(msg):
     line = f"{Fore.YELLOW}{msg}{Fore.RESET}"
     LOG_BUFFER.append(line)
+    append_log_to_file(line)
     redraw_logs()
 
 def log_error(msg):
     line = f"{Fore.RED}{msg}{Fore.RESET}"
     LOG_BUFFER.append(line)
+    append_log_to_file(line)
     redraw_logs()
 
 def log_section(title):
     line = f"\n{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}"
     LOG_BUFFER.append(line)
+    append_log_to_file(line)
     redraw_logs()
 
 def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data", state_handler=None):
@@ -407,8 +425,6 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                 if attempt > 0:
                     current_delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
                     current_delay *= random.uniform(0.8, 1.2)  # Add jitter
-                    log(f"[WAIT] Attempt {attempt + 1}: Waiting {current_delay:.1f}s", "info")
-                    time.sleep(current_delay)
 
                 # Create a new session for each attempt
                 session = requests.Session()
@@ -448,9 +464,13 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                 if state_handler:
                     state_handler.add_failed(file_url, str(e))
                     state_handler.add_delay(current_delay, success=False)
-                log(f"[FAIL] Attempt {attempt + 1} for {file_url}: {str(e)}", "error")
+                # Combine FAIL and WAIT logs
                 if attempt == MAX_RETRIES:
+                    log(f"[FAIL] Attempt {attempt + 1} for {file_url}: {str(e)}", "error")
                     raise
+                else:
+                    log(f"[FAIL] Attempt {attempt + 1} for {file_url}: {str(e)} | Waiting {current_delay:.1f}s before retry", "error")
+                    time.sleep(current_delay)
     except Exception as e:
         if state_handler:
             state_handler.add_failed(file_url, str(e))
@@ -778,6 +798,7 @@ def extract_file_links(html_content):
     return file_links
 
 def main():
+    print_banner() 
     log_info(f"Ray version: {ray.__version__}")
     log_info(f"Available CPUs: {ray.available_resources()['CPU']}")
     setup_download_dir()
@@ -793,7 +814,7 @@ def main():
     log_success(f"Found {len(file_links)} files to download")
     log_section("PHASE 2: Parallel downloads with Ray")
     start_time = time.time()
-    max_concurrent = min(8, int(ray.available_resources()['CPU'] * 1.5))
+    max_concurrent = min(16, int(ray.available_resources()['CPU'] * 1.5))
     log_info(f"Using {max_concurrent} parallel workers")
     state_handler = DownloadState(incremental=INCREMENTAL)
     results = parallel_download_with_ray(file_links, max_concurrent, "tlc_data", state_handler)
@@ -823,7 +844,6 @@ if __name__ == "__main__":
         include_dashboard=False,
         logging_level=logging.ERROR,
         ignore_reinit_error=True,
-        # log_to_driver=False
     )
     try:
         main()
