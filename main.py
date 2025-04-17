@@ -339,14 +339,23 @@ def parallel_download_with_ray(file_urls, max_concurrent=8, download_dir="data",
             ready, active_tasks = ray.wait(active_tasks, timeout=5.0)
             if ready:
                 result = ray.get(ready[0])
+                # Print logs from the result in the main process
+                for level, msg in result.get("logs", []):
+                    if level == "info":
+                        log_info(msg)
+                    elif level == "success":
+                        log_success(msg)
+                    elif level == "warning":
+                        log_warning(msg)
+                    elif level == "error":
+                        log_error(msg)
                 results.append(result)
                 pbar.update(1)
                 # Use custom log functions for all logs
                 if result['status'] == 'success':
-                    log_success(f"[DONE] Downloaded {os.path.basename(result['file'])} "
-                                f"({result.get('size', 0)/1024/1024:.2f} MB) in {result.get('time', 0):.2f}s")
+                    pass  # Already logged in logs
                 elif result['status'] == 'error':
-                    log_error(f"[FAIL] {os.path.basename(result['file'])} - {result.get('error', '')}")
+                    pass  # Already logged in logs
                 else:
                     log_warning(f"[SKIP] {os.path.basename(result['file'])}")
                 if result.get('delay'):
@@ -365,14 +374,18 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
     MAX_RETRIES = 5      # Maximum number of retries
     current_delay = INITIAL_DELAY
     temp_filename = None
-    
+    logs = []
+
+    def log(msg, level="info"):
+        logs.append((level, msg))
+
     try:
         # Check if file already downloaded
         if state_handler and state_handler.is_completed(file_url):
-            log_info(f"[SKIP] Already downloaded: {file_url}")
-            return {"status": "skipped", "file": file_url, "reason": "already_completed"}
+            log(f"[SKIP] Already downloaded: {file_url}", "info")
+            return {"status": "skipped", "file": file_url, "reason": "already_completed", "logs": logs}
         
-        log_info(f"[TRY] Downloading: {file_url}")
+        log(f"[TRY] Downloading: {file_url}", "info")
         
         # Configure download
         local_filename = os.path.join(download_dir, file_url.split('/')[-1])
@@ -394,7 +407,7 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                 if attempt > 0:
                     current_delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
                     current_delay *= random.uniform(0.8, 1.2)  # Add jitter
-                    log_info(f"[WAIT] Attempt {attempt + 1}: Waiting {current_delay:.1f}s")
+                    log(f"[WAIT] Attempt {attempt + 1}: Waiting {current_delay:.1f}s", "info")
                     time.sleep(current_delay)
 
                 # Create a new session for each attempt
@@ -405,84 +418,43 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
                 start_time = time.time()
                 with session.get(file_url, stream=True, timeout=(30, 60)) as r:
                     if r.status_code == 403:
-                        raise Exception("403 Forbidden - Potential blocking detected")
-                    r.raise_for_status()
-                    
-                    if state_handler:
-                        state_handler.add_delay(current_delay, success=True)
-                    
-                    if r.url != file_url:
-                        log_info(f"[REDIR] {file_url} → {r.url}")
-
-                    total_size = int(r.headers.get('content-length', 0))
-                    downloaded = 0
-
-                    # Remove any existing temp file
-                    if os.path.isfile(temp_filename):
-                        os.remove(temp_filename)
-
-                    # Download file without individual progress bar
+                        raise Exception("403 Forbidden")
+                    if r.status_code != 200:
+                        raise Exception(f"HTTP {r.status_code}")
+                    os.makedirs(download_dir, exist_ok=True)
                     with open(temp_filename, 'wb') as f:
+                        downloaded = 0
                         for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
-                            if not chunk:
-                                continue
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                    
-                    if total_size > 0 and downloaded != total_size:
-                        raise Exception(f"Size mismatch: expected {total_size}, got {downloaded}")
-
-                # Remove existing file if it exists before rename
-                if os.path.exists(local_filename):
-                    os.remove(local_filename)
-                
-                # Commit download
-                os.rename(temp_filename, local_filename)
-                download_time = time.time() - start_time
-
-                # Update state
-                if state_handler:
-                    state_handler.add_completed(file_url, local_filename, downloaded)
-
-                log_success(f"[DONE] Downloaded {os.path.basename(local_filename)} "
-                            f"({downloaded/1024/1024:.2f} MB) in {download_time:.2f}s")
-                
-                return {
-                    "status": "success",
-                    "file": local_filename,
-                    "size": downloaded,
-                    "time": download_time,
-                    "speed": downloaded / (download_time + 1e-6),
-                    "attempts": attempt + 1
-                }
-
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                    os.replace(temp_filename, local_filename)
+                    download_time = time.time() - start_time
+                    if state_handler:
+                        state_handler.add_completed(file_url, local_filename, downloaded)
+                        state_handler.add_delay(download_time, success=True)
+                    log(f"[DONE] Downloaded {os.path.basename(local_filename)} "
+                        f"({downloaded/1024/1024:.2f} MB) in {download_time:.2f}s", "success")
+                    return {
+                        "status": "success",
+                        "file": local_filename,
+                        "size": downloaded,
+                        "time": download_time,
+                        "speed": downloaded / (download_time + 1e-6),
+                        "attempts": attempt + 1,
+                        "logs": logs
+                    }
             except Exception as e:
                 if state_handler:
+                    state_handler.add_failed(file_url, str(e))
                     state_handler.add_delay(current_delay, success=False)
-                
-                if "403" in str(e):
-                    # Rotate user agent for 403 errors
-                    headers['User-Agent'] = random.choice(USER_AGENTS)
-                    log_warning("[403] Rotating User-Agent and retrying...")
-                
-                if attempt >= MAX_RETRIES:
+                log(f"[FAIL] Attempt {attempt + 1} for {file_url}: {str(e)}", "error")
+                if attempt == MAX_RETRIES:
                     raise
-                
-                error_msg = str(e)
-                if "SSL" in error_msg:
-                    error_msg = "SSL Error - retrying with different parameters"
-                elif "Connection" in error_msg:
-                    error_msg = "Connection Error - retrying"
-                
-                log_warning(f"[RETRY] Attempt {attempt + 1} failed: {error_msg}")
-
     except Exception as e:
-        # Record failure
         if state_handler:
-            state_handler.add_failed(file_url, e)
-        
-        log_error(f"[FAIL] Failed to download {file_url} after {MAX_RETRIES} attempts: {str(e)}")
-        
+            state_handler.add_failed(file_url, str(e))
+        log(f"[FAIL] Failed to download {file_url} after {MAX_RETRIES} attempts: {str(e)}", "error")
         return {
             "status": "error",
             "file": file_url,
@@ -490,14 +462,15 @@ def download_file_ray(file_url, download_dir="data", state_handler=None):
             "retry_count": state_handler.state['failed'].get(
                 state_handler.get_file_id(file_url), {}).get('retries', 0) if state_handler else 0,
             "delay": current_delay,
-            "attempts": attempt + 1
+            "attempts": attempt + 1 if 'attempt' in locals() else 0,
+            "logs": logs
         }
     finally:
         if temp_filename and os.path.exists(temp_filename):
             try:
                 os.remove(temp_filename)
-            except Exception as e:
-                log_warning(f"[WARN] Could not remove temp file {temp_filename}: {e}")
+            except Exception:
+                pass
 
 def download_file(file_url, download_dir="data", state_handler=None):
     CHUNK_SIZE = 5 * 1024 * 1024  # 5MB
