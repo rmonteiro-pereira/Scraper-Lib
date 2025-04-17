@@ -19,6 +19,7 @@
 - **Progress Visualization:** Uses tqdm for beautiful progress bars.
 - **Comprehensive Reporting:** Generates JSON reports and visualizations (if matplotlib is installed) of download delays and errors.
 - **Colorful Console Output:** Uses colorama for clear, color-coded logs.
+- **Dual Logging:** Terminal shows only relevant events (e.g., `[DONE]` for successful downloads), while the log file (`console_log.txt`) contains all attempts, retries, and errors for full traceability.
 
 ---
 
@@ -41,8 +42,11 @@
    - `tqdm`
    - `colorama`
    - `beautifulsoup4`
-   - `matplotlib` (optional, for plots)
-   - `portalocker` or `filelock` (for atomic state files)
+   - `matplotlib` 
+   - `pandas`
+   - `numpy`
+   - `lxml`
+   - `portalocker` 
 
 ---
 
@@ -54,6 +58,7 @@ python main.py
 
 - All downloaded files will be saved in the `tlc_data` directory.
 - Download state and reports are saved as JSON files for reproducibility.
+- The terminal displays only the most relevant log lines for each file (e.g., `[DONE]` for success), while `console_log.txt` contains the full log history including all `[TRY]` and `[FAIL]` attempts.
 
 ---
 
@@ -76,11 +81,12 @@ After execution, a summary is printed to the console and a detailed report is sa
 
 ```
 .
-├── main.py / texte2.py      # Main script
+├── main.py                  # Main script
 ├── requirements.txt         # Dependencies
 ├── tlc_data/                # Downloaded files
 ├── download_state.json      # Download state (auto-generated)
 ├── download_report_*.json   # Download reports (auto-generated)
+├── console_log.txt          # Full log of all events
 └── delay_*_analysis.png     # Visualizations (auto-generated)
 ```
 
