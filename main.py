@@ -16,7 +16,7 @@ import ray
 from collections import deque
 # from pprint import pprint
 import portalocker
-from colorama import init, Fore, Back, Style
+from colorama import init, Fore, Style
 
 # Initialize colorama
 init(autoreset=True)
