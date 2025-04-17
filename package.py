@@ -15,14 +15,13 @@ import matplotlib.pyplot as plt
 import ray
 from collections import deque
 from colorama import init, Fore, Style
-from loggin import  log_info, log_warning, log_error, log_section, log_success, PlainFormatter
+from CustomLogger import CustomLogger
 from state import DownloadState
 import numpy as np
 from datetime import datetime
 
-
 def parallel_download_with_ray(file_urls, headers, user_agents, max_concurrent=8, download_dir="data", state_handler=None,
-                              LOG_BUFFER_TERMINAL=None, LOG_BUFFER_FILE=None, LOG_FILE_BUFFER=None, BANNER=None):
+                              logger=None):
     random.shuffle(file_urls)
     @ray.remote
     class Queue:
@@ -57,7 +56,7 @@ def parallel_download_with_ray(file_urls, headers, user_agents, max_concurrent=8
         for _ in range(max_concurrent):
             url = ray.get(queue.get_next.remote())
             if url:
-                active_tasks.append(download_file_ray.remote(url,headers, user_agents, download_dir, state_handler))
+                active_tasks.append(download_file_ray.remote(url, headers, user_agents, download_dir, state_handler))
 
         while active_tasks:
             ready, active_tasks = ray.wait(active_tasks, timeout=5.0)
@@ -65,23 +64,24 @@ def parallel_download_with_ray(file_urls, headers, user_agents, max_concurrent=8
                 result = ray.get(ready[0])
                 # Print logs from the result in the main process
                 for level, msg in result.get("logs", []):
-                    if level == "info":
-                        log_info(msg, LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-                    elif level == "success":
-                        log_success(msg, LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-                    elif level == "warning":
-                        log_warning(msg, LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-                    elif level == "error":
-                        log_error(msg, LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+                    if logger:
+                        if level == "info":
+                            logger.info(msg)
+                        elif level == "success":
+                            logger.success(msg)
+                        elif level == "warning":
+                            logger.warning(msg)
+                        elif level == "error":
+                            logger.error(msg)
                 results.append(result)
                 pbar.update(1)
-                # Use custom log functions for all logs
                 if result['status'] == 'success':
-                    pass  # Already logged in logs
+                    pass
                 elif result['status'] == 'error':
-                    pass  # Already logged in logs
+                    pass
                 else:
-                    log_warning(f"[SKIP] {os.path.basename(result['file'])}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+                    if logger:
+                        logger.warning(f"[SKIP] {os.path.basename(result['file'])}")
                 if result.get('delay'):
                     dynamic_delay = max(1.0, (dynamic_delay + result['delay']) / 2)
                 time.sleep(dynamic_delay * random.uniform(0.9, 1.1))
@@ -104,40 +104,28 @@ def download_file_ray(file_url, headers, user_agents, download_dir="data", state
         logs.append((level, msg))
 
     try:
-        # Check if file already downloaded
         if state_handler and state_handler.is_completed(file_url):
             log(f"[SKIP] Already downloaded: {file_url}", "info")
             return {"status": "skipped", "file": file_url, "reason": "already_completed", "logs": logs}
         
         log(f"[TRY] Downloading: {file_url}", "info")
-        
-        # Configure download
         local_filename = os.path.join(download_dir, file_url.split('/')[-1])
-        
-        # Enhanced headers with referer
         used_headers = headers
         used_user_agents = user_agents
         used_headers.update({
             'User-Agent': random.choice(used_user_agents),
             'Referer': base_url if base_url else file_url
         })
-        
-        # Create unique temp filename
         timestamp = int(time.time())
         temp_filename = f"{local_filename}.{timestamp}.tmp"
 
-        for attempt in range(MAX_RETRIES + 1):  # +1 for the initial attempt
+        for attempt in range(MAX_RETRIES + 1):
             try:
-                # Exponential backoff with jitter
                 if attempt > 0:
                     current_delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
-                    current_delay *= random.uniform(0.8, 1.2)  # Add jitter
-
-                # Create a new session for each attempt
+                    current_delay *= random.uniform(0.8, 1.2)
                 session = requests.Session()
                 session.headers.update(used_headers)
-                
-                # Download with session and timeout
                 start_time = time.time()
                 with session.get(file_url, stream=True, timeout=(30, 60)) as r:
                     if r.status_code == 403:
@@ -171,7 +159,6 @@ def download_file_ray(file_url, headers, user_agents, download_dir="data", state
                 if state_handler:
                     state_handler.add_failed(file_url, str(e))
                     state_handler.add_delay(current_delay, success=False)
-                # Combine FAIL and WAIT logs
                 if attempt == MAX_RETRIES:
                     log(f"[FAIL] Attempt {attempt + 1} for {file_url}: {str(e)}", "error")
                     raise
@@ -199,18 +186,11 @@ def download_file_ray(file_url, headers, user_agents, download_dir="data", state
             except Exception:
                 pass
 
-def generate_report(results, state, report_prefix="download_report",
-                   LOG_BUFFER_TERMINAL=None, LOG_BUFFER_FILE=None, LOG_FILE_BUFFER=None, BANNER=None):
-    """Generate comprehensive statistics report with visualization"""
-    # Get all delay data
+def generate_report(results, state, report_prefix="download_report", logger=None):
     delays_success = state.state.get('delays_success', [])
     delays_failed = state.state.get('delays_failed', [])
-    
-    # Prepare delay statistics
     success_delays = [d['value'] for d in delays_success]
     failed_delays = [d['value'] for d in delays_failed]
-    
-    # Calculate statistics for successful delays
     success_stats = {}
     if success_delays:
         success_stats = {
@@ -223,8 +203,6 @@ def generate_report(results, state, report_prefix="download_report",
                 '95th': np.percentile(success_delays, 95) if len(success_delays) > 1 else success_delays[0]
             }
         }
-
-    # Calculate statistics for failed delays
     failed_stats = {}
     if failed_delays:
         failed_stats = {
@@ -237,8 +215,6 @@ def generate_report(results, state, report_prefix="download_report",
                 '95th': np.percentile(failed_delays, 95) if len(failed_delays) > 1 else failed_delays[0]
             }
         }
-
-    # --- CORREÇÃO DO CÁLCULO DE DATETIME ---
     stats = state.state['stats']
     start_time_str = stats.get('start_time')
     last_update_str = stats.get('last_update') or datetime.now().isoformat()
@@ -251,8 +227,6 @@ def generate_report(results, state, report_prefix="download_report",
         elapsed = 1
         time_elapsed_str = "unknown"
     throughput_gbps = stats['total_bytes'] * 8 / (1024**3) / max(1, elapsed)
-
-    # Create report structure
     report = {
         "summary": {
             "total_files": len(results),
@@ -272,14 +246,9 @@ def generate_report(results, state, report_prefix="download_report",
             for r in results if r['status'] == 'error'
         ]
     }
-
-    # Generate visualizations if matplotlib is available
     try:
-        # Create figure for successful delays
         if success_delays:
             plt.figure(figsize=(12, 6))
-            
-            # Time-series plot
             plt.subplot(1, 2, 1)
             plt.plot([datetime.fromisoformat(d['timestamp']) for d in delays_success], 
                     success_delays, 'b.', alpha=0.5, label='Sucesso')
@@ -288,8 +257,6 @@ def generate_report(results, state, report_prefix="download_report",
             plt.ylabel('Delay (segundos)')
             plt.grid(True, alpha=0.3)
             plt.legend()
-            
-            # Distribution plot
             plt.subplot(1, 2, 2)
             plt.hist(success_delays, bins=20, color='g', alpha=0.7, label='Sucesso')
             plt.title('Distribuição dos Delays (Sucessos)')
@@ -297,14 +264,11 @@ def generate_report(results, state, report_prefix="download_report",
             plt.ylabel('Frequência')
             plt.grid(True, alpha=0.3)
             plt.legend()
-            
             plt.tight_layout()
             success_plot_filename = 'delay_success_analysis.png'
             plt.savefig(success_plot_filename, dpi=300)
             plt.close()
             report['success_delay_plot'] = success_plot_filename
-
-        # Create figure for failed delays
         if failed_delays:
             plt.figure(figsize=(8, 5))
             plt.hist(failed_delays, bins=20, color='r', alpha=0.7, label='Falhas')
@@ -313,40 +277,32 @@ def generate_report(results, state, report_prefix="download_report",
             plt.ylabel('Frequência')
             plt.grid(True, alpha=0.3)
             plt.legend()
-            
             plt.tight_layout()
             failed_plot_filename = 'delay_failed_analysis.png'
             plt.savefig(failed_plot_filename, dpi=300)
             plt.close()
             report['failed_delay_plot'] = failed_plot_filename
-
     except ImportError:
-        log_warning("Matplotlib não disponível - visualizações não geradas")
-
-    # Save JSON report
+        if logger:
+            logger.warning("Matplotlib não disponível - visualizações não geradas")
     report_filename = f"{report_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(report_filename, 'w') as f:
         json.dump(report, f, indent=2)
-
-    # Log summary to console
-    log_section("FINAL SUMMARY", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_success(f"✔ Success: {report['summary']['success']}/{report['summary']['total_files']} ({report['summary']['success']/report['summary']['total_files']:.1%})", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_warning(f"↻ Skipped: {report['summary']['skipped']}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_error(f"✖ Failed: {report['summary']['failed']}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_info(f"Total data: {report['summary']['total_bytes']/(1024**3):.2f} GB", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_info(f"Throughput: {report['summary']['throughput_gbps']:.2f} Gbps", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_info(f"Time elapsed: {report['summary']['time_elapsed']}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-
-    # Log visualization info
-    if 'success_delay_plot' in report:
-        log_info(f"Success delay plot saved to: {report['success_delay_plot']}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    if 'failed_delay_plot' in report:
-        log_info(f"Failed delay plot saved to: {report['failed_delay_plot']}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-
-    log_info(f"Full report saved to: {report_filename}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+    if logger:
+        logger.section("FINAL SUMMARY")
+        logger.success(f"✔ Success: {report['summary']['success']}/{report['summary']['total_files']} ({report['summary']['success']/report['summary']['total_files']:.1%})")
+        logger.warning(f"↻ Skipped: {report['summary']['skipped']}")
+        logger.error(f"✖ Failed: {report['summary']['failed']}")
+        logger.info(f"Total data: {report['summary']['total_bytes']/(1024**3):.2f} GB")
+        logger.info(f"Throughput: {report['summary']['throughput_gbps']:.2f} Gbps")
+        logger.info(f"Time elapsed: {report['summary']['time_elapsed']}")
+        if 'success_delay_plot' in report:
+            logger.info(f"Success delay plot saved to: {report['success_delay_plot']}")
+        if 'failed_delay_plot' in report:
+            logger.info(f"Failed delay plot saved to: {report['failed_delay_plot']}")
+        logger.info(f"Full report saved to: {report_filename}")
 
 def extract_file_links(html_content, base_url, patterns):
-    """Extract file download links from the page using given patterns"""
     soup = BeautifulSoup(html_content, 'html.parser')
     file_links = []
     for a_tag in soup.find_all('a', href=True):
@@ -356,9 +312,7 @@ def extract_file_links(html_content, base_url, patterns):
             file_links.append(absolute_url)
     return file_links
 
-def get_page_content(url, user_agents, headers,
-                    LOG_BUFFER_TERMINAL=None, LOG_BUFFER_FILE=None, LOG_FILE_BUFFER=None, BANNER=None):
-    """Get HTML content of the page with better header handling"""
+def get_page_content(url, user_agents, headers, logger=None):
     headers = headers.copy() if headers else {}
     if user_agents:
         headers['User-Agent'] = random.choice(user_agents)
@@ -369,7 +323,8 @@ def get_page_content(url, user_agents, headers,
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        log_error(f"[ERROR] Error accessing page: {e}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+        if logger:
+            logger.error(f"[ERROR] Error accessing page: {e}")
         return None
 
 def scraper(
@@ -383,14 +338,9 @@ def scraper(
     user_agents=None,
     state_file="download_state.json",
     log_file="taxi_extraction.log",
-    console_log_file="console_log.txt",
+    console_log_file="console_log.log",
     report_prefix="download_report"
 ):
-    # Initialize log buffers and banner as local variables
-    LOG_BUFFER_TERMINAL = []
-    LOG_BUFFER_FILE = []
-    LOG_FILE_BUFFER = console_log_file
-    # Initialize colorama
     init(autoreset=True)
     BANNER = rf"""
 {Fore.CYAN}{Style.BRIGHT}
@@ -409,7 +359,7 @@ def scraper(
 {Fore.GREEN}{'Scraper Lib'.center(60)}
 {Fore.YELLOW}{'='*60}{Fore.RESET}
 """
-    # Default headers and user agents (used unless overridden)
+    logger = CustomLogger(banner=BANNER, console_log_file_path=console_log_file, file_log_path=log_file)
     DEFAULT_HEADERS = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
@@ -422,7 +372,6 @@ def scraper(
         'Sec-Fetch-Site': 'none',
         'Sec-Fetch-User': '?1',
     }
-
     DEFAULT_USER_AGENTS = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -433,25 +382,13 @@ def scraper(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
     ]
-    
-    # Use internal defaults unless overridden
     if headers is None:
         headers = DEFAULT_HEADERS
     if user_agents is None:
         user_agents = DEFAULT_USER_AGENTS
 
-    # Set up logging file handler with the provided log_file path
-    for handler in logging.getLogger().handlers[:]:
-        logging.getLogger().removeHandler(handler)
-    file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='w')
-    file_handler.setLevel(logging.INFO)
-    file_formatter = PlainFormatter("[%(asctime)s] %(levellevelname)s %(message)s", datefmt='%Y-%m-%d %H:%M:%S')
-    file_handler.setFormatter(file_formatter)
-    logging.getLogger().addHandler(file_handler)
-
     print(BANNER)
     ray_cpu = min(max_concurrent, os.cpu_count())
-    # ---- INÍCIO DO RAY ----
     ray.shutdown()
     ray.init(
         num_cpus=ray_cpu,
@@ -459,43 +396,41 @@ def scraper(
         logging_level=logging.ERROR,
         ignore_reinit_error=True,
     )
-    # Agora é seguro acessar recursos do Ray
-    log_info(f"Ray version: {ray.__version__}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_info(f"Available CPUs: {ray.available_resources()['CPU']}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_info(f"Using CPUs: {ray_cpu}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+    logger.info(f"Ray version: {ray.__version__}")
+    logger.info(f"Available CPUs: {ray.available_resources()['CPU']}")
+    logger.info(f"Using CPUs: {ray_cpu}")
 
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
-        log_success(f"[DIR] Created directory: {download_dir}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+        logger.success(f"[DIR] Created directory: {download_dir}")
     else:
-        log_info(f"[DIR] Directory exists: {download_dir}", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_section("PHASE 1: Collecting file links", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    html_content = get_page_content(base_url, user_agents, headers, LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+        logger.info(f"[DIR] Directory exists: {download_dir}")
+    logger.section("PHASE 1: Collecting file links")
+    html_content = get_page_content(base_url, user_agents, headers, logger=logger)
     if not html_content:
-        log_error("Failed to access main page. Check connection and URL.", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+        logger.error("Failed to access main page. Check connection and URL.")
         ray.shutdown()
         return
     file_links = extract_file_links(html_content, base_url, file_patterns)
     if max_files:
         file_links = file_links[:max_files]
     if not file_links:
-        log_error("No valid links found. Check extraction pattern.", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+        logger.error("No valid links found. Check extraction pattern.")
         ray.shutdown()
         return
-    log_success(f"Found {len(file_links)} files to download", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    log_section("PHASE 2: Parallel downloads with Ray", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+    logger.success(f"Found {len(file_links)} files to download")
+    logger.section("PHASE 2: Parallel downloads with Ray")
     if max_concurrent is None:
         max_concurrent = min(16, int(ray.available_resources()['CPU'] * 1.5))
-    log_info(f"Using {max_concurrent} parallel workers", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
+    logger.info(f"Using {max_concurrent} parallel workers")
+    
     state_handler = DownloadState(state_file=state_file, incremental=incremental)
     results = parallel_download_with_ray(
         file_links, headers, user_agents, max_concurrent, download_dir, state_handler,
-        LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER, 
+        logger=logger
     )
-    log_section("PHASE 3: Results analysis", LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE, LOG_FILE_BUFFER, BANNER)
-    generate_report(results, state_handler, report_prefix=report_prefix,
-                    LOG_BUFFER_TERMINAL=LOG_BUFFER_TERMINAL, LOG_BUFFER_FILE=LOG_BUFFER_FILE,
-                    LOG_FILE_BUFFER=LOG_FILE_BUFFER, BANNER=BANNER)
+    logger.section("PHASE 3: Results analysis")
+    generate_report(results, state_handler, report_prefix=report_prefix, logger=logger)
     ray.shutdown()
 
 def cli():
@@ -509,13 +444,12 @@ def cli():
     parser.add_argument("--max-concurrent", type=int, default=None, help="Max parallel downloads")
     parser.add_argument("--state-file", default="download_state.json", help="Path for download state file")
     parser.add_argument("--log-file", default="taxi_extraction.log", help="Path for main log file")
-    parser.add_argument("--console-log-file", default="console_log.txt", help="Path for console log file")
+    parser.add_argument("--console-log-file", default="console_log.log", help="Path for console log file")
     parser.add_argument("--report-prefix", default="download_report", help="Prefix for report files")
     parser.add_argument("--headers", type=str, default=None, help="Path to JSON file with custom headers")
     parser.add_argument("--user-agents", type=str, default=None, help="Path to text file with custom user agents (one per line)")
     args = parser.parse_args()
 
-    # Optionally load custom headers and user agents from files
     headers = None
     user_agents = None
     if args.headers:
@@ -525,7 +459,8 @@ def cli():
         with open(args.user_agents, "r", encoding="utf-8") as f:
             user_agents = [line.strip() for line in f if line.strip()]
 
-    log_info("Starting Ray cluster...")
+    logger = CustomLogger(console_log_file=args.console_log_file)
+    logger.info("Starting Ray cluster...")
     ray.shutdown()
     ray.init(
         num_cpus=min(args.max_concurrent, os.cpu_count()),
@@ -550,4 +485,4 @@ def cli():
         )
     finally:
         ray.shutdown()
-        log_info("Ray cluster shutdown")
+        logger.info("Ray cluster shutdown")
