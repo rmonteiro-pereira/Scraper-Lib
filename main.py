@@ -678,6 +678,20 @@ def generate_report(results, state):
             }
         }
 
+    # --- CORREÇÃO DO CÁLCULO DE DATETIME ---
+    stats = state.state['stats']
+    start_time_str = stats.get('start_time')
+    last_update_str = stats.get('last_update') or datetime.now().isoformat()
+    try:
+        start_dt = datetime.fromisoformat(start_time_str) if start_time_str else datetime.now()
+        last_update_dt = datetime.fromisoformat(last_update_str) if last_update_str else datetime.now()
+        elapsed = (last_update_dt - start_dt).total_seconds()
+        time_elapsed_str = str(last_update_dt - start_dt)
+    except Exception:
+        elapsed = 1
+        time_elapsed_str = "unknown"
+    throughput_gbps = stats['total_bytes'] * 8 / (1024**3) / max(1, elapsed)
+
     # Create report structure
     report = {
         "summary": {
@@ -685,12 +699,9 @@ def generate_report(results, state):
             "success": sum(1 for r in results if r['status'] == 'success'),
             "skipped": sum(1 for r in results if r['status'] == 'skipped'),
             "failed": sum(1 for r in results if r['status'] == 'error'),
-            "total_bytes": state.state['stats']['total_bytes'],
-            "throughput_gbps": state.state['stats']['total_bytes'] * 8 / (1024**3) / max(
-                1, (datetime.fromisoformat(state.state['stats']['last_update']) - 
-                datetime.fromisoformat(state.state['stats']['start_time'])).total_seconds()),
-            "time_elapsed": str(datetime.fromisoformat(state.state['stats']['last_update']) - 
-                              datetime.fromisoformat(state.state['stats']['start_time']))
+            "total_bytes": stats['total_bytes'],
+            "throughput_gbps": throughput_gbps,
+            "time_elapsed": time_elapsed_str
         },
         "delays": {
             "success": success_stats,
@@ -699,7 +710,7 @@ def generate_report(results, state):
         "failed_downloads": [
             {"url": r['file'], "error": r['error'], "retries": r.get('retry_count', 0)}
             for r in results if r['status'] == 'error'
-        ][:100]
+        ]
     }
 
     # Generate visualizations if matplotlib is available
@@ -825,7 +836,7 @@ def main():
         log_error("Failed to access main page. Check connection and URL.")
         return
     file_links = extract_file_links(html_content)
-    file_links = file_links[:50]
+    file_links = file_links[:10]
     if not file_links:
         log_error("No valid links found. Check extraction pattern.")
         return
@@ -851,7 +862,7 @@ def main():
     log_error(f"✖ Errors: {errors}")
     log_info(f"Total data: {total_size_gb:.2f} GB")
     log_info(f"Total time: {total_time:.2f} seconds")
-    log_info(f"Throughput: {total_size_gb/(total_time/60)::.2f} GB/min")
+    log_info(f"Throughput: {total_size_gb/(total_time/60):.2f} GB/min")
     generate_report(results, state_handler)
 
 if __name__ == "__main__":
