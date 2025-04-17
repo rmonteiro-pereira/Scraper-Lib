@@ -48,7 +48,7 @@ class PlainFormatter(logging.Formatter):
         return msg
 
 log_file = "taxi_extraction.log"
-file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='w')  # <-- mode='w' erases file each run
 file_handler.setLevel(logging.INFO)
 file_formatter = PlainFormatter("[%(asctime)s] %(levelname)s %(message)s", datefmt='%Y-%m-%d %H:%M:%S')
 file_handler.setFormatter(file_formatter)
