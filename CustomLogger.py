@@ -56,8 +56,7 @@ class CustomLogger(logging.Formatter):
         return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
 
     def info(self, msg):
-        # Add time only if line starts with [TRY], [FAIL], or [DONE]
-        add_time = any(msg.strip().startswith(tag) for tag in ("[TRY]", "[FAIL]", "[DONE]"))
+        add_time = any(msg.strip().startswith(tag) for tag in ("[TRY]", "[FAIL]", "[DONE]", "[SKIP]"))
         line = f"{self._now()} {Fore.CYAN}{msg}{Fore.RESET}" if add_time else f"{Fore.CYAN}{msg}{Fore.RESET}"
         item = ("info", line)
         self.LOG_BUFFER_TERMINAL.append(item)

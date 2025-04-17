@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 import os
 os.environ['RAY_DEDUP_LOGS'] = "0"
 os.environ["RAY_SILENT_MODE"] = "1"
-
 from tqdm import tqdm
 from urllib.parse import urljoin
 import time
@@ -20,8 +19,10 @@ from state import DownloadState
 import numpy as np
 from datetime import datetime
 
-def parallel_download_with_ray(file_urls, headers, user_agents, max_concurrent=8, download_dir="data", state_handler=None,
-                              logger=None):
+def parallel_download_with_ray(
+    file_urls, headers, user_agents, max_concurrent=8, download_dir="data", state_handler=None,
+    logger=None, disable_progress_bar=False  # <-- NEW ARG
+):
     random.shuffle(file_urls)
     @ray.remote
     class Queue:
@@ -39,7 +40,7 @@ def parallel_download_with_ray(file_urls, headers, user_agents, max_concurrent=8
 
     bar_format = f"{Fore.GREEN}{{l_bar}}{Fore.BLUE}{{bar}}{Fore.RESET}{{r_bar}}"
 
-    with tqdm(
+    progress_bar = tqdm(
         total=len(file_urls),
         desc=f"{Fore.YELLOW}Downloading Files{Fore.RESET}",
         bar_format=bar_format,
@@ -50,8 +51,11 @@ def parallel_download_with_ray(file_urls, headers, user_agents, max_concurrent=8
         position=0,
         ascii=" ░▒█",
         file=sys.stdout,
-        colour=None
-    ) as pbar:
+        colour=None,
+        disable=disable_progress_bar  # <-- Disable if requested
+    )
+
+    with progress_bar as pbar:
         tqdm._instances.clear()
         for _ in range(max_concurrent):
             url = ray.get(queue.get_next.remote())
@@ -62,7 +66,6 @@ def parallel_download_with_ray(file_urls, headers, user_agents, max_concurrent=8
             ready, active_tasks = ray.wait(active_tasks, timeout=5.0)
             if ready:
                 result = ray.get(ready[0])
-                # Print logs from the result in the main process
                 for level, msg in result.get("logs", []):
                     if logger:
                         if level == "info":
@@ -75,13 +78,6 @@ def parallel_download_with_ray(file_urls, headers, user_agents, max_concurrent=8
                             logger.error(msg)
                 results.append(result)
                 pbar.update(1)
-                if result['status'] == 'success':
-                    pass
-                elif result['status'] == 'error':
-                    pass
-                else:
-                    if logger:
-                        logger.warning(f"[SKIP] {os.path.basename(result['file'])}")
                 if result.get('delay'):
                     dynamic_delay = max(1.0, (dynamic_delay + result['delay']) / 2)
                 time.sleep(dynamic_delay * random.uniform(0.9, 1.1))
@@ -339,9 +335,13 @@ def scraper(
     state_file="download_state.json",
     log_file="taxi_extraction.log",
     console_log_file="console_log.log",
-    report_prefix="download_report"
+    report_prefix="download_report",
+    disable_logging=False,                # <-- NEW ARGUMENT
+    dataset_name=None,                    # <-- NEW ARGUMENT
+    disable_progress_bar=False,           # <-- NEW ARGUMENT
 ):
     init(autoreset=True)
+    yellow_title = "Starting download" if not dataset_name else f"Starting download of {dataset_name}"
     BANNER = rf"""
 {Fore.CYAN}{Style.BRIGHT}
 
@@ -356,10 +356,14 @@ def scraper(
            
 {Style.RESET_ALL}
 {Fore.YELLOW}{'='*60}
-{Fore.GREEN}{'Scraper Lib'.center(60)}
+{Fore.GREEN}{yellow_title.center(60)}
 {Fore.YELLOW}{'='*60}{Fore.RESET}
 """
-    logger = CustomLogger(banner=BANNER, console_log_file_path=console_log_file, file_log_path=log_file)
+    logger = None
+    if not disable_logging:
+        logger = CustomLogger(banner=BANNER, console_log_file_path=console_log_file, file_log_path=log_file)
+        print(BANNER)
+
     DEFAULT_HEADERS = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
@@ -387,7 +391,6 @@ def scraper(
     if user_agents is None:
         user_agents = DEFAULT_USER_AGENTS
 
-    print(BANNER)
     ray_cpu = min(max_concurrent, os.cpu_count())
     ray.shutdown()
     ray.init(
@@ -396,40 +399,54 @@ def scraper(
         logging_level=logging.ERROR,
         ignore_reinit_error=True,
     )
-    logger.info(f"Ray version: {ray.__version__}")
-    logger.info(f"Available CPUs: {ray.available_resources()['CPU']}")
-    logger.info(f"Using CPUs: {ray_cpu}")
+
+    if logger: 
+        logger.info(f"Ray version: {ray.__version__}")
+    if logger: 
+        logger.info(f"Available CPUs: {ray.available_resources()['CPU']}")
+    if logger: 
+        logger.info(f"Using CPUs: {ray_cpu}")
 
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
-        logger.success(f"[DIR] Created directory: {download_dir}")
+        if logger: 
+            logger.success(f"[DIR] Created directory: {download_dir}")
     else:
-        logger.info(f"[DIR] Directory exists: {download_dir}")
-    logger.section("PHASE 1: Collecting file links")
+        if logger: 
+            logger.info(f"[DIR] Directory exists: {download_dir}")
+    if logger: 
+        logger.section("PHASE 1: Collecting file links")
     html_content = get_page_content(base_url, user_agents, headers, logger=logger)
     if not html_content:
-        logger.error("Failed to access main page. Check connection and URL.")
+        if logger: 
+            logger.error("Failed to access main page. Check connection and URL.")
         ray.shutdown()
         return
     file_links = extract_file_links(html_content, base_url, file_patterns)
     if max_files:
         file_links = file_links[:max_files]
     if not file_links:
-        logger.error("No valid links found. Check extraction pattern.")
+        if logger: 
+            logger.error("No valid links found. Check extraction pattern.")
         ray.shutdown()
         return
-    logger.success(f"Found {len(file_links)} files to download")
-    logger.section("PHASE 2: Parallel downloads with Ray")
+    if logger: 
+        logger.success(f"Found {len(file_links)} files to download")
+    if logger: 
+        logger.section("PHASE 2: Parallel downloads with Ray")
     if max_concurrent is None:
         max_concurrent = min(16, int(ray.available_resources()['CPU'] * 1.5))
-    logger.info(f"Using {max_concurrent} parallel workers")
+    if logger: 
+        logger.info(f"Using {max_concurrent} parallel workers")
     
     state_handler = DownloadState(state_file=state_file, incremental=incremental)
     results = parallel_download_with_ray(
         file_links, headers, user_agents, max_concurrent, download_dir, state_handler,
-        logger=logger
+        logger=logger,
+        disable_progress_bar=disable_progress_bar  # <-- Pass to function
     )
-    logger.section("PHASE 3: Results analysis")
+    if logger: 
+        logger.section("PHASE 3: Results analysis")
     generate_report(results, state_handler, report_prefix=report_prefix, logger=logger)
     ray.shutdown()
 
@@ -448,6 +465,9 @@ def cli():
     parser.add_argument("--report-prefix", default="download_report", help="Prefix for report files")
     parser.add_argument("--headers", type=str, default=None, help="Path to JSON file with custom headers")
     parser.add_argument("--user-agents", type=str, default=None, help="Path to text file with custom user agents (one per line)")
+    parser.add_argument("--disable-logging", action="store_true", help="Disable all logging for production pipelines")  # <-- NEW ARG
+    parser.add_argument("--dataset-name", type=str, default=None, help="Dataset name for banner")  # <-- NEW ARG
+    parser.add_argument("--disable-progress-bar", action="store_true", help="Disable tqdm progress bar")  # <-- NEW ARG
     args = parser.parse_args()
 
     headers = None
@@ -459,8 +479,12 @@ def cli():
         with open(args.user_agents, "r", encoding="utf-8") as f:
             user_agents = [line.strip() for line in f if line.strip()]
 
-    logger = CustomLogger(console_log_file=args.console_log_file)
-    logger.info("Starting Ray cluster...")
+    if not args.disable_logging:
+        logger = CustomLogger(console_log_file_path=args.console_log_file, file_log_path=args.log_file)
+        logger.info("Starting Ray cluster...")
+    else:
+        logger = None
+
     ray.shutdown()
     ray.init(
         num_cpus=min(args.max_concurrent, os.cpu_count()),
@@ -482,7 +506,11 @@ def cli():
             log_file=args.log_file,
             console_log_file=args.console_log_file,
             report_prefix=args.report_prefix,
+            disable_logging=args.disable_logging,
+            dataset_name=args.dataset_name,
+            disable_progress_bar=args.disable_progress_bar  # <-- Pass to scraper
         )
     finally:
         ray.shutdown()
-        logger.info("Ray cluster shutdown")
+        if logger:
+            logger.info("Ray cluster shutdown")
