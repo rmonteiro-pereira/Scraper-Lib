@@ -345,6 +345,7 @@ def scraper(
     dataset_name=None,                   
     disable_progress_bar=False,          
     output_dir="./output",
+    max_old_logs=25,                     # <-- NEW ARGUMENT
 ):
     init(autoreset=True)
     yellow_title = "Starting download" if not dataset_name else f"Starting download of {dataset_name}"
@@ -369,7 +370,7 @@ def scraper(
     if not disable_logging:
         if log_file:
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
-        logger = CustomLogger(banner=BANNER, log_file_path=log_file)
+        logger = CustomLogger(banner=BANNER, log_file_path=log_file, max_old_logs=max_old_logs)  # <-- Pass max_old_logs
         print(BANNER)
 
     # Ensure output_dir exists (for report PNGs/JSON)

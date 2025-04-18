@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import logging
+import gc
 from colorama import Fore
 from datetime import datetime
 
@@ -18,20 +19,59 @@ class CustomLogger(logging.Formatter):
         'DEBUG': '•'
     }
 
-    def __init__(self, banner="", log_file_path=None):
+    def __init__(self, banner="", log_file_path=None, max_old_logs=25):
         super().__init__()
+        # Ensure log file ends with .log
+        if log_file_path and not log_file_path.endswith(".log"):
+            log_file_path += ".log"
         self.path_log_file = log_file_path
         self.LOG_BUFFER_TERMINAL = []
         self.LOG_BUFFER_FILE = []
         self.BANNER = banner
-        # Remove all handlers
-        for handler in logging.getLogger().handlers[:]:
-            logging.getLogger().removeHandler(handler)
-        # Clear log file at start
+        # Remove and close all handlers
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass
+        # Handle old log file rotation
         if log_file_path:
             os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+            # Only rotate if file exists and is not empty
+            if os.path.isfile(log_file_path) and os.path.getsize(log_file_path) > 0:
+                base, ext = os.path.splitext(log_file_path)
+                rotated = []
+                for fname in os.listdir(os.path.dirname(log_file_path)):
+                    if fname.startswith(os.path.basename(base)) and fname.endswith(ext):
+                        parts = fname.split(ext)
+                        if len(parts) == 2 and parts[1].startswith('.'):
+                            rotated.append(fname)
+                rotated_full = [os.path.join(os.path.dirname(log_file_path), f) for f in rotated]
+                if len(rotated_full) >= max_old_logs:
+                    rotated_full.sort(key=os.path.getmtime)
+                    for oldfile in rotated_full[:len(rotated_full) - max_old_logs + 1]:
+                        try:
+                            os.remove(oldfile)
+                        except Exception:
+                            pass
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                rotated_name = f"{base}.{ts}{ext}"
+                # Explicitly run garbage collection to help release file handles
+                gc.collect()
+                try:
+                    os.rename(log_file_path, rotated_name)
+                except PermissionError:
+                    # Wait and try again (in rare cases, file may be locked for a moment)
+                    import time
+                    time.sleep(0.2)
+                    gc.collect()
+                    os.rename(log_file_path, rotated_name)
+            # Clear log file at start (truncate)
             with open(log_file_path, "w", encoding="utf-8"):
                 pass
+            # Only now add the handler!
             file_handler = logging.FileHandler(log_file_path, encoding='utf-8', mode='a')
             file_handler.setLevel(logging.INFO)
             file_handler.setFormatter(self)
