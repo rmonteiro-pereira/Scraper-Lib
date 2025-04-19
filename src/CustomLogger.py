@@ -252,3 +252,11 @@ class CustomLogger(logging.Formatter):
         if symbol and not msg.startswith(symbol):
             msg = f"{symbol} {msg}"
         return msg
+
+    def close(self):
+        """Close any open file handles or perform cleanup if needed."""
+        if hasattr(self, "log_file") and getattr(self, "log_file", None):
+            try:
+                self.log_file.close()
+            except Exception:
+                pass
