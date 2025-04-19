@@ -13,3 +13,4 @@ wheels/
 *.json
 *.txt
 *.png
+/docs/_build
