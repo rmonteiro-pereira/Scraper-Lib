@@ -53,6 +53,11 @@
    ```bash
    poetry install
    ```
+   Or, for faster installs (recommended for Linux/Mac):
+   ```bash
+   pip install uv
+   uv pip install -r requirements.txt
+   ```
 
    *Main dependencies:*
    - `ray`
