@@ -9,24 +9,28 @@ os.environ["RAY_SILENT_MODE"] = "1"
 from tqdm import tqdm
 from urllib.parse import urljoin
 import random
-import sys
 import json
 import matplotlib.pyplot as plt 
 import ray
 from collections import deque
 from colorama import init, Fore, Style
-from CustomLogger import CustomLogger
-try:
-    from DownloadState import DownloadState
-except ImportError:
-    try:
-        from .DownloadState import DownloadState
-    except ImportError:
-        from src.DownloadState import DownloadState
+import sys
 import numpy as np
 from datetime import datetime
 import gc
 import shutil
+from CustomLogger import CustomLogger
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SRC_DIR, ".."))
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, SRC_DIR)
+try:
+    from DownloadState import DownloadState
+except (ImportError, ModuleNotFoundError):
+    try:
+        from .DownloadState import DownloadState
+    except (ImportError, ModuleNotFoundError):
+        from src.DownloadState import DownloadState
 
 
 
