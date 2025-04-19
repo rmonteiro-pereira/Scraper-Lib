@@ -5,6 +5,7 @@ import logging
 import gc
 from colorama import Fore
 from datetime import datetime
+from typing import List, Tuple, Optional, Any
 
 __all__ = [
     "CustomLogger",
@@ -28,7 +29,7 @@ class CustomLogger(logging.Formatter):
         'DEBUG': '•'
     }
 
-    def __init__(self, banner="", log_file_path=None, max_old_logs=25):
+    def __init__(self, banner: str = "", log_file_path: Optional[str] = None, max_old_logs: int = 25) -> None:
         """
         Initialize the CustomLogger.
 
@@ -38,15 +39,13 @@ class CustomLogger(logging.Formatter):
             max_old_logs (int): Maximum number of old log files to keep.
         """
         super().__init__()
-        # Ensure log file ends with .log
         if log_file_path and not log_file_path.endswith(".log"):
             log_file_path += ".log"
-        self.path_log_file = log_file_path
-        self.LOG_BUFFER_TERMINAL = []
-        self.LOG_BUFFER_FILE = []
-        self.BANNER = banner
-        self.disable_terminal_logging = False  # <-- Add this attribute
-        # Remove and close all handlers
+        self.path_log_file: Optional[str] = log_file_path
+        self.LOG_BUFFER_TERMINAL: List[Any] = []
+        self.LOG_BUFFER_FILE: List[Any] = []
+        self.BANNER: str = banner
+        self.disable_terminal_logging: bool = False
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
             root_logger.removeHandler(handler)
@@ -54,24 +53,20 @@ class CustomLogger(logging.Formatter):
                 handler.close()
             except Exception:
                 pass
-        # Handle old log file rotation
         if log_file_path:
             os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
-            # Only rotate if file exists and is not empty
             if os.path.isfile(log_file_path) and os.path.getsize(log_file_path) > 0:
                 base, ext = os.path.splitext(log_file_path)
-                # Match only rotated logs: e.g. process_log.log.20240418_153000
-                rotated = []
+                rotated: List[str] = []
                 for fname in os.listdir(os.path.dirname(log_file_path)):
                     if (
                         fname.startswith(os.path.basename(base))
                         and fname.endswith(ext)
                         and fname != os.path.basename(log_file_path)
-                        and len(fname) > len(os.path.basename(log_file_path)) + 1  # must have .TIMESTAMP
+                        and len(fname) > len(os.path.basename(log_file_path)) + 1
                     ):
                         rotated.append(fname)
-                rotated_full = [os.path.join(os.path.dirname(log_file_path), f) for f in rotated]
-                # Remove oldest if exceeding max_old_logs
+                rotated_full: List[str] = [os.path.join(os.path.dirname(log_file_path), f) for f in rotated]
                 if len(rotated_full) >= max_old_logs:
                     rotated_full.sort(key=os.path.getmtime)
                     for oldfile in rotated_full[:len(rotated_full) - max_old_logs + 1]:
@@ -79,8 +74,8 @@ class CustomLogger(logging.Formatter):
                             os.remove(oldfile)
                         except Exception:
                             pass
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                rotated_name = f"{base}.{ts}{ext}"
+                ts: str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                rotated_name: str = f"{base}.{ts}{ext}"
                 gc.collect()
                 try:
                     os.rename(log_file_path, rotated_name)
@@ -89,17 +84,15 @@ class CustomLogger(logging.Formatter):
                     time.sleep(0.2)
                     gc.collect()
                     os.rename(log_file_path, rotated_name)
-            # Clear log file at start (truncate)
             with open(log_file_path, "w", encoding="utf-8"):
                 pass
-            # Only now add the handler!
             file_handler = logging.FileHandler(log_file_path, encoding='utf-8', mode='a')
             file_handler.setLevel(logging.INFO)
             file_handler.setFormatter(self)
             self.file_handler = file_handler
             logging.getLogger().addHandler(file_handler)
 
-    def strip_ansi(self, line):
+    def strip_ansi(self, line: str) -> str:
         """
         Remove ANSI color codes from a log line.
 
@@ -112,7 +105,7 @@ class CustomLogger(logging.Formatter):
         ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
         return ansi_escape.sub('', line)
 
-    def redraw_logs(self):
+    def redraw_logs(self) -> None:
         """
         Redraw all logs in the terminal, including the banner.
         """
@@ -127,7 +120,7 @@ class CustomLogger(logging.Formatter):
         for line in self.LOG_BUFFER_TERMINAL:
             print(line[1])
 
-    def append_log_to_file(self, line, filename=None):
+    def append_log_to_file(self, line: str, filename: Optional[str] = None) -> None:
         """
         Append a log line to the log file.
 
@@ -141,7 +134,7 @@ class CustomLogger(logging.Formatter):
             with open(filename, "a", encoding="utf-8") as f:
                 f.write(self.strip_ansi(line) + "\n")
 
-    def _now(self):
+    def _now(self) -> str:
         """
         Get the current timestamp as a string.
 
@@ -150,7 +143,7 @@ class CustomLogger(logging.Formatter):
         """
         return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
 
-    def info(self, msg):
+    def info(self, msg: str) -> None:
         """
         Log an info message.
 
@@ -165,7 +158,7 @@ class CustomLogger(logging.Formatter):
         self.append_log_to_file(line, self.path_log_file)
         self.redraw_logs()
 
-    def warning(self, msg):
+    def warning(self, msg: str) -> None:
         """
         Log a warning message.
 
@@ -180,7 +173,7 @@ class CustomLogger(logging.Formatter):
         self.append_log_to_file(line, self.path_log_file)
         self.redraw_logs()
 
-    def error(self, msg):
+    def error(self, msg: str) -> None:
         """
         Log an error message.
 
@@ -195,14 +188,13 @@ class CustomLogger(logging.Formatter):
         self.append_log_to_file(line, self.path_log_file)
         self.redraw_logs()
 
-    def section(self, title):
+    def section(self, title: str) -> None:
         """
         Log a section title.
 
         Args:
             title (str): Section title.
         """
-        # Section titles do not get a timestamp
         line = f"{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}"
         item = ("section", line)
         self.LOG_BUFFER_TERMINAL.append(item)
@@ -210,7 +202,7 @@ class CustomLogger(logging.Formatter):
         self.append_log_to_file(line, self.path_log_file)
         self.redraw_logs()
 
-    def success(self, msg):
+    def success(self, msg: str) -> None:
         """
         Log a success message.
 
@@ -234,7 +226,7 @@ class CustomLogger(logging.Formatter):
         self.append_log_to_file(line, self.path_log_file)
         self.redraw_logs()
 
-    def get_buffers(self):
+    def get_buffers(self) -> Tuple[List[Any], List[Any], str]:
         """
         Get the terminal and file log buffers and the banner.
 
@@ -243,7 +235,7 @@ class CustomLogger(logging.Formatter):
         """
         return self.LOG_BUFFER_TERMINAL, self.LOG_BUFFER_FILE, self.BANNER
 
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         """
         Format a log record for file output.
 

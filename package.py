@@ -3,6 +3,7 @@ import time
 import logging
 from bs4 import BeautifulSoup
 import os
+from typing import Any, Callable, Dict, List, Optional, Union
 os.environ['RAY_DEDUP_LOGS'] = "0"
 os.environ["RAY_SILENT_MODE"] = "1"
 from tqdm import tqdm
@@ -21,6 +22,8 @@ from datetime import datetime
 import gc
 import shutil
 
+
+
 class ScraperLib:
     """
     Library for parallel file extraction and download, report generation, and log/result rotation.
@@ -31,30 +34,30 @@ class ScraperLib:
 
     def __init__(
         self,
-        base_url,
-        file_patterns,
-        download_dir="data",
-        incremental=False,
-        max_files=None,
-        max_concurrent=None,
-        headers=None,
-        user_agents=None,
-        state_file="./state/download_state.json",
-        log_file="./logs/process_log.log",
-        report_prefix="download_report",
-        disable_logging=False,
-        disable_terminal_logging=False,
-        dataset_name=None,
-        disable_progress_bar=False,
-        output_dir="./output",
-        max_old_logs=25,
-        max_old_runs=25,
-        ray_instance=None,
-        chunk_size=5 * 1024 * 1024,
-        initial_delay=1.0,
-        max_delay=60.0,
-        max_retries=5,
-    ):
+        base_url: str,
+        file_patterns: List[str],
+        download_dir: str = "data",
+        incremental: bool = False,
+        max_files: Optional[int] = None,
+        max_concurrent: Optional[int] = None,
+        headers: Optional[Dict[str, Any]] = None,
+        user_agents: Optional[List[str]] = None,
+        state_file: str = "./state/download_state.json",
+        log_file: str = "./logs/process_log.log",
+        report_prefix: str = "download_report",
+        disable_logging: bool = False,
+        disable_terminal_logging: bool = False,
+        dataset_name: Optional[str] = None,
+        disable_progress_bar: bool = False,
+        output_dir: str = "./output",
+        max_old_logs: int = 25,
+        max_old_runs: int = 25,
+        ray_instance: Optional[Any] = None,
+        chunk_size: Union[int, str] = 5 * 1024 * 1024,
+        initial_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_retries: int = 5,
+    ) -> None:
         """
         Initialize ScraperLib with the provided options.
 
@@ -83,32 +86,39 @@ class ScraperLib:
             max_delay (float): Maximum delay between retries (seconds).
             max_retries (int): Maximum number of download retries.
         """
-        self.base_url = base_url
-        self.file_patterns = file_patterns
-        self.download_dir = download_dir
-        self.incremental = incremental
-        self.max_files = max_files
-        self.max_concurrent = max_concurrent
-        self.headers = headers
-        self.user_agents = user_agents
-        self.state_file = state_file
-        self.log_file = log_file
-        self.report_prefix = report_prefix
-        self.disable_logging = disable_logging
-        self.disable_terminal_logging = disable_terminal_logging
-        self.dataset_name = dataset_name
-        self.disable_progress_bar = disable_progress_bar
-        self.output_dir = output_dir
-        self.max_old_logs = max_old_logs
-        self.max_old_runs = max_old_runs
-        self.ray_instance = ray_instance
-        self.chunk_size = parse_chunk_size(chunk_size) if isinstance(chunk_size, str) else chunk_size
-        self.initial_delay = initial_delay
-        self.max_delay = max_delay
-        self.max_retries = max_retries
-        self.logger = None
+        self.base_url: str = base_url
+        self.file_patterns: List[str] = file_patterns
+        self.download_dir: str = download_dir
+        self.incremental: bool = incremental
+        self.max_files: Optional[int] = max_files
+        self.max_concurrent: Optional[int] = max_concurrent
+        self.headers: Optional[Dict[str, Any]] = headers
+        self.user_agents: Optional[List[str]] = user_agents
+        self.state_file: str = state_file
+        self.log_file: str = log_file
+        self.report_prefix: str = report_prefix
+        self.disable_logging: bool = disable_logging
+        self.disable_terminal_logging: bool = disable_terminal_logging
+        self.dataset_name: Optional[str] = dataset_name
+        self.disable_progress_bar: bool = disable_progress_bar
+        self.output_dir: str = output_dir
+        self.max_old_logs: int = max_old_logs
+        self.max_old_runs: int = max_old_runs
+        self.ray_instance: Optional[Any] = ray_instance
+        self.chunk_size: int = self._parse_chunk_size(chunk_size) if isinstance(chunk_size, str) else chunk_size
+        self.initial_delay: float = initial_delay
+        self.max_delay: float = max_delay
+        self.max_retries: int = max_retries
+        self.logger: Optional[CustomLogger] = None
 
-    def _safe_copy2(self, src, dst, max_retries=10, delay=0.2, logger=None):
+    def _safe_copy2(
+        self,
+        src: str,
+        dst: str,
+        max_retries: int = 10,
+        delay: float = 0.2,
+        logger: Optional[CustomLogger] = None
+    ) -> bool:
         """
         Safely copies a file from src to dst, retrying multiple times if the file is in use.
 
@@ -134,7 +144,12 @@ class ScraperLib:
                 time.sleep(delay)
         return False
 
-    def _rotate_and_limit_files(self, base_path, ext, max_old_files):
+    def _rotate_and_limit_files(
+        self,
+        base_path: str,
+        ext: str,
+        max_old_files: Optional[int]
+    ) -> None:
         """
         Rotates and limits old files (e.g., logs, reports, PNGs).
 
@@ -147,7 +162,7 @@ class ScraperLib:
             return
         if max_old_files is None:
             return
-        rotated = []
+        rotated: List[str] = []
         for fname in os.listdir(os.path.dirname(base_path)):
             if (
                 fname.startswith(os.path.basename(base_path))
@@ -156,7 +171,7 @@ class ScraperLib:
                 and len(fname) > len(os.path.basename(base_path + ext)) + 1
             ):
                 rotated.append(fname)
-        rotated_full = [os.path.join(os.path.dirname(base_path), f) for f in rotated]
+        rotated_full: List[str] = [os.path.join(os.path.dirname(base_path), f) for f in rotated]
         if len(rotated_full) >= max_old_files:
             rotated_full.sort(key=os.path.getmtime)
             for oldfile in rotated_full[:len(rotated_full) - max_old_files + 1]:
@@ -165,8 +180,8 @@ class ScraperLib:
                 except Exception:
                     pass
         if os.path.getsize(base_path + ext) > 0:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            rotated_name = f"{base_path}.{ts}{ext}"
+            ts: str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            rotated_name: str = f"{base_path}.{ts}{ext}"
             gc.collect()
             try:
                 os.rename(base_path + ext, rotated_name)
@@ -175,7 +190,12 @@ class ScraperLib:
                 gc.collect()
                 os.rename(base_path + ext, rotated_name)
 
-    def _extract_file_links(self, html_content, base_url, patterns):
+    def _extract_file_links(
+        self,
+        html_content: str,
+        base_url: str,
+        patterns: List[str]
+    ) -> List[str]:
         """
         Extracts file links from HTML that match the provided patterns.
 
@@ -187,16 +207,22 @@ class ScraperLib:
         Returns:
             list: List of absolute URLs of found files.
         """
-        soup = BeautifulSoup(html_content, 'html.parser')
-        file_links = []
+        soup: BeautifulSoup = BeautifulSoup(html_content, 'html.parser')
+        file_links: List[str] = []
         for a_tag in soup.find_all('a', href=True):
-            href = a_tag['href'].lower()
+            href: str = a_tag['href'].lower()
             if any(pattern in href for pattern in patterns):
-                absolute_url = urljoin(base_url, a_tag['href'])
+                absolute_url: str = urljoin(base_url, a_tag['href'])
                 file_links.append(absolute_url)
         return file_links
 
-    def _get_page_content(self, url, user_agents, headers, logger=None):
+    def _get_page_content(
+        self,
+        url: str,
+        user_agents: Optional[List[str]],
+        headers: Optional[Dict[str, Any]],
+        logger: Optional[CustomLogger] = None
+    ) -> Optional[str]:
         """
         Downloads the HTML content of the base page.
 
@@ -212,10 +238,10 @@ class ScraperLib:
         headers = headers.copy() if headers else {}
         if user_agents:
             headers['User-Agent'] = random.choice(user_agents)
-        session = requests.Session()
+        session: requests.Session = requests.Session()
         session.headers.update(headers)
         try:
-            response = session.get(url, timeout=(10, 30))
+            response: requests.Response = session.get(url, timeout=(10, 30))
             response.raise_for_status()
             return response.text
         except requests.exceptions.RequestException as e:
@@ -225,13 +251,13 @@ class ScraperLib:
 
     def _generate_report(
         self,
-        results,
-        state,
-        report_prefix=None,
-        logger=None,
-        output_dir=None,
-        max_old_runs=None
-    ):
+        results: List[Dict[str, Any]],
+        state: DownloadState,
+        report_prefix: Optional[str] = None,
+        logger: Optional[CustomLogger] = None,
+        output_dir: Optional[str] = None,
+        max_old_runs: Optional[int] = None
+    ) -> None:
         """
         Generates a JSON report and analysis PNGs of downloads, with file rotation.
 
@@ -412,15 +438,15 @@ class ScraperLib:
 
     def _parallel_download_with_ray(
         self,
-        file_urls,
-        headers,
-        user_agents,
-        max_concurrent=8,
-        download_dir="data",
-        state_handler=None,
-        logger=None,
-        disable_progress_bar=False
-    ):
+        file_urls: List[str],
+        headers: Dict[str, Any],
+        user_agents: List[str],
+        max_concurrent: int = 8,
+        download_dir: str = "data",
+        state_handler: Optional[DownloadState] = None,
+        logger: Optional[CustomLogger] = None,
+        disable_progress_bar: bool = False
+    ) -> List[Dict[str, Any]]:
         """
         Performs parallel download of files using Ray.
 
@@ -515,11 +541,20 @@ class ScraperLib:
                         )
         return results
 
+    @staticmethod
     @ray.remote
     def _download_file_ray(
-        file_url, headers, user_agents, download_dir="data", state_handler=None,
-        chunk_size=5 * 1024 * 1024, initial_delay=1.0, max_delay=60.0, max_retries=5, base_url=None
-    ):
+        file_url: str,
+        headers: Dict[str, Any],
+        user_agents: List[str],
+        download_dir: str = "data",
+        state_handler: Optional[DownloadState] = None,
+        chunk_size: int = 5 * 1024 * 1024,
+        initial_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_retries: int = 5,
+        base_url: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Ray remote function for downloading a file.
 
@@ -632,7 +667,7 @@ class ScraperLib:
                 except Exception:
                     pass
 
-    def run(self):
+    def run(self) -> None:
         """
         Runs the main scraping, download, and report generation flow.
 
@@ -778,7 +813,7 @@ class ScraperLib:
             ray.shutdown()
 
     @staticmethod
-    def cli():
+    def cli() -> None:
         """
         Command-line interface to run ScraperLib.
 
@@ -873,7 +908,7 @@ Arguments:
             with open(args.user_agents, "r", encoding="utf-8") as f:
                 user_agents = [line.strip() for line in f if line.strip()]
 
-        chunk_size = parse_chunk_size(args.chunk_size)
+        chunk_size = ScraperLib._parse_chunk_size(args.chunk_size)
 
         ray.shutdown()
         ray.init(
@@ -911,7 +946,7 @@ Arguments:
         finally:
             ray.shutdown()
 
-    def _parse_chunk_size(size_str):
+    def _parse_chunk_size(size_str: str) -> int:
         """
         Parse a human-readable chunk size string (e.g., '1gb', '10mb', '8 bytes') into an integer number of bytes.
 

@@ -4,6 +4,7 @@ import portalocker
 import numpy as np
 import json
 import hashlib
+from typing import Any, Callable, Dict
 
 class DownloadState:
     """
@@ -17,7 +18,7 @@ class DownloadState:
         incremental (bool): If True, loads existing state; otherwise, starts fresh.
     """
 
-    def __init__(self, state_file="download_state.json", incremental=True):
+    def __init__(self, state_file: str = "download_state.json", incremental: bool = True) -> None:
         """
         Initialize the DownloadState.
 
@@ -25,14 +26,14 @@ class DownloadState:
             state_file (str): Path to the state file (JSON).
             incremental (bool): If True, loads existing state; otherwise, starts fresh.
         """
-        self.state_file = state_file
-        self._cache = {}  # Local cache to reduce disk access
+        self.state_file: str = state_file
+        self._cache: Dict[str, Any] = {}  # Local cache to reduce disk access
         if incremental:
             self.load_state()
         else:
             self.generate()
 
-    def generate(self):
+    def generate(self) -> Dict[str, Any]:
         """
         Initialize a fresh state structure.
 
@@ -66,7 +67,7 @@ class DownloadState:
         }
         return self._cache
 
-    def _atomic_file_operation(self, operation):
+    def _atomic_file_operation(self, operation: Callable[[], None]) -> None:
         """
         Execute file operations with locking for safe concurrent access.
 
@@ -94,7 +95,7 @@ class DownloadState:
             finally:
                 portalocker.unlock(f)
 
-    def add_delay(self, delay, success=True):
+    def add_delay(self, delay: float, success: bool = True) -> None:
         """
         Record a new delay and update statistics.
 
@@ -102,7 +103,7 @@ class DownloadState:
             delay (float): Delay value in seconds.
             success (bool): True if the delay was for a successful download.
         """
-        def _add():
+        def _add() -> None:
             delay_record = {
                 'value': delay,
                 'timestamp': datetime.now().isoformat()
@@ -125,7 +126,7 @@ class DownloadState:
             self._cache['stats']['last_update'] = datetime.now().isoformat()
         self._atomic_file_operation(_add)
 
-    def load_state(self):
+    def load_state(self) -> None:
         """
         Load state from file.
         """
@@ -138,15 +139,15 @@ class DownloadState:
         else:
             self.generate()
 
-    def save_state(self):
+    def save_state(self) -> None:
         """
         Save the current state to file.
         """
-        def _save():
+        def _save() -> None:
             self._cache['stats']['last_update'] = datetime.now().isoformat()
         self._atomic_file_operation(_save)
 
-    def get_file_id(self, url):
+    def get_file_id(self, url: str) -> str:
         """
         Generate a unique file ID for a given URL.
 
@@ -158,7 +159,7 @@ class DownloadState:
         """
         return hashlib.md5(url.encode()).hexdigest()
 
-    def is_completed(self, url):
+    def is_completed(self, url: str) -> bool:
         """
         Check if a file has already been downloaded.
 
@@ -170,7 +171,7 @@ class DownloadState:
         """
         return self.get_file_id(url) in self._cache['completed']
 
-    def add_completed(self, url, filepath, size):
+    def add_completed(self, url: str, filepath: str, size: int) -> None:
         """
         Mark a file as successfully downloaded.
 
@@ -179,7 +180,7 @@ class DownloadState:
             filepath (str): Local file path.
             size (int): File size in bytes.
         """
-        def _add():
+        def _add() -> None:
             file_id = self.get_file_id(url)
             self._cache['completed'][file_id] = {
                 'url': url,
@@ -193,7 +194,7 @@ class DownloadState:
                 del self._cache['failed'][file_id]
         self._atomic_file_operation(_add)
 
-    def add_failed(self, url, error):
+    def add_failed(self, url: str, error: Any) -> None:
         """
         Mark a file as failed to download.
 
@@ -201,7 +202,7 @@ class DownloadState:
             url (str): File URL.
             error (str): Error message.
         """
-        def _add():
+        def _add() -> None:
             file_id = self.get_file_id(url)
             current_retries = self._cache['failed'].get(file_id, {}).get('retries', 0)
             self._cache['failed'][file_id] = {
@@ -214,7 +215,7 @@ class DownloadState:
         self._atomic_file_operation(_add)
 
     @property
-    def state(self):
+    def state(self) -> Dict[str, Any]:
         """
         Get the current state dictionary.
 
