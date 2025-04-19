@@ -28,6 +28,7 @@ class CustomLogger(logging.Formatter):
         self.LOG_BUFFER_TERMINAL = []
         self.LOG_BUFFER_FILE = []
         self.BANNER = banner
+        self.disable_terminal_logging = False  # <-- Add this attribute
         # Remove and close all handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
@@ -42,13 +43,18 @@ class CustomLogger(logging.Formatter):
             # Only rotate if file exists and is not empty
             if os.path.isfile(log_file_path) and os.path.getsize(log_file_path) > 0:
                 base, ext = os.path.splitext(log_file_path)
+                # Match only rotated logs: e.g. process_log.log.20240418_153000
                 rotated = []
                 for fname in os.listdir(os.path.dirname(log_file_path)):
-                    if fname.startswith(os.path.basename(base)) and fname.endswith(ext):
-                        parts = fname.split(ext)
-                        if len(parts) == 2 and parts[1].startswith('.'):
-                            rotated.append(fname)
+                    if (
+                        fname.startswith(os.path.basename(base))
+                        and fname.endswith(ext)
+                        and fname != os.path.basename(log_file_path)
+                        and len(fname) > len(os.path.basename(log_file_path)) + 1  # must have .TIMESTAMP
+                    ):
+                        rotated.append(fname)
                 rotated_full = [os.path.join(os.path.dirname(log_file_path), f) for f in rotated]
+                # Remove oldest if exceeding max_old_logs
                 if len(rotated_full) >= max_old_logs:
                     rotated_full.sort(key=os.path.getmtime)
                     for oldfile in rotated_full[:len(rotated_full) - max_old_logs + 1]:
@@ -58,12 +64,10 @@ class CustomLogger(logging.Formatter):
                             pass
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 rotated_name = f"{base}.{ts}{ext}"
-                # Explicitly run garbage collection to help release file handles
                 gc.collect()
                 try:
                     os.rename(log_file_path, rotated_name)
                 except PermissionError:
-                    # Wait and try again (in rare cases, file may be locked for a moment)
                     import time
                     time.sleep(0.2)
                     gc.collect()
@@ -83,6 +87,8 @@ class CustomLogger(logging.Formatter):
         return ansi_escape.sub('', line)
 
     def redraw_logs(self):
+        if getattr(self, "disable_terminal_logging", False):
+            return
         if os.name == 'nt':
             os.system('cls')
         else:
