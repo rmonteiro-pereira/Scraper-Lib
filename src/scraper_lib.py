@@ -16,17 +16,11 @@ import ray
 from collections import deque
 from colorama import init, Fore, Style
 from CustomLogger import CustomLogger
-try:
-    from DownloadState import DownloadState
-except ImportError:
-    try:
-        from .DownloadState import DownloadState
-    except ImportError:
-        from src.DownloadState import DownloadState
 import numpy as np
 from datetime import datetime
 import gc
 import shutil
+from src.DownloadState import DownloadState
 
 
 

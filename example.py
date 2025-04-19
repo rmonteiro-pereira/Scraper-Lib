@@ -28,7 +28,7 @@ if __name__ == "__main__":
             download_dir="./tlc_data",
             incremental=True,
             state_file="./state/download_state.json",
-            log_file="../logs/process_log.log",
+            log_file="./logs/process_log.log",
             output_dir="./output",
             max_files=2,
             max_concurrent=16,
