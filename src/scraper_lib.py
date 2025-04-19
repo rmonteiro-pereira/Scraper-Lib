@@ -816,14 +816,14 @@ class ScraperLib:
             ray.shutdown()
 
     @staticmethod
-    def scrapercli() -> None:
+    def cli() -> None:
         """
         Command-line interface to run ScraperLib.
 
         Reads arguments from the terminal, instantiates ScraperLib, and runs the process.
 
         Usage example:
-            python -m package --url <URL> --patterns .csv .zip --dir data --max-files 10
+            python -m scraper_lib.cli --url <URL> --patterns .csv .zip --dir data --max-files 10
 
         Parameters:
             --url: Base URL to scrape for files.
