@@ -1,4 +1,5 @@
 import requests
+import time
 import logging
 from bs4 import BeautifulSoup
 import os
@@ -18,6 +19,8 @@ from CustomLogger import CustomLogger
 from state import DownloadState
 import numpy as np
 from datetime import datetime
+import gc
+import shutil
 
 def parallel_download_with_ray(
     file_urls, headers, user_agents, max_concurrent=8, download_dir="data", state_handler=None,
@@ -182,10 +185,76 @@ def download_file_ray(file_url, headers, user_agents, download_dir="data", state
             except Exception:
                 pass
 
-def generate_report(results, state, report_prefix="download_report", logger=None, output_dir="."):
+def rotate_and_limit_files(base_path, ext, max_old_files):
+    """
+    Rotates and limits files like download_report.json and PNGs.
+    Keeps at most max_old_files rotated files.
+    If max_old_files is None, disables rotation/removal.
+    """
+    if not os.path.exists(base_path + ext):
+        return
+    if max_old_files is None:
+        return  # Do not rotate or remove any files
+    # Find rotated files
+    rotated = []
+    for fname in os.listdir(os.path.dirname(base_path)):
+        if (
+            fname.startswith(os.path.basename(base_path))
+            and fname.endswith(ext)
+            and fname != os.path.basename(base_path + ext)
+            and len(fname) > len(os.path.basename(base_path + ext)) + 1  # must have .TIMESTAMP
+        ):
+            rotated.append(fname)
+    rotated_full = [os.path.join(os.path.dirname(base_path), f) for f in rotated]
+    # Remove oldest if exceeding max_old_files
+    if len(rotated_full) >= max_old_files:
+        rotated_full.sort(key=os.path.getmtime)
+        for oldfile in rotated_full[:len(rotated_full) - max_old_files + 1]:
+            try:
+                os.remove(oldfile)
+            except Exception:
+                pass
+    # Rotate current file if not empty
+    if os.path.getsize(base_path + ext) > 0:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        rotated_name = f"{base_path}.{ts}{ext}"
+        gc.collect()
+        try:
+            os.rename(base_path + ext, rotated_name)
+        except PermissionError:
+            time.sleep(0.2)
+            gc.collect()
+            os.rename(base_path + ext, rotated_name)
+
+import time
+
+def safe_copy2(src, dst, max_retries=10, delay=0.2, logger=None):
+    """Tenta copiar o arquivo até que não esteja mais em uso."""
+    print(src, dst)
+    for attempt in range(max_retries):
+        try:
+            shutil.copy2(src, dst)
+            return True
+        except PermissionError as e:
+            if attempt == max_retries - 1:
+                if logger:
+                    logger.error(f"Failed to copy {src} to {dst}: {e}")
+                raise
+            time.sleep(delay)
+    return False
+
+def generate_report(
+    results, state, report_prefix="download_report", logger=None, output_dir=".", max_old_runs=25
+):
     # Ensure output directory exists
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
+
+    # Create subfolders for reports and PNGs
+    report_dir = os.path.join(output_dir, "reports")
+    png_dir = os.path.join(output_dir, "pngs")
+    os.makedirs(report_dir, exist_ok=True)
+    os.makedirs(png_dir, exist_ok=True)
 
     delays_success = state.state.get('delays_success', [])
     delays_failed = state.state.get('delays_failed', [])
@@ -265,9 +334,9 @@ def generate_report(results, state, report_prefix="download_report", logger=None
             plt.grid(True, alpha=0.3)
             plt.legend()
             plt.tight_layout()
-            success_plot_filename = os.path.join(output_dir, 'delay_success_analysis.png')
+            success_plot_filename = os.path.join(png_dir, 'delay_success_analysis.png')
             plt.savefig(success_plot_filename, dpi=300)
-            plt.close()
+            plt.close('all')
             report['success_delay_plot'] = success_plot_filename
         if failed_delays:
             plt.figure(figsize=(8, 5))
@@ -278,18 +347,58 @@ def generate_report(results, state, report_prefix="download_report", logger=None
             plt.grid(True, alpha=0.3)
             plt.legend()
             plt.tight_layout()
-            failed_plot_filename = os.path.join(output_dir, 'delay_failed_analysis.png')
+            failed_plot_filename = os.path.join(png_dir, 'delay_failed_analysis.png')
             plt.savefig(failed_plot_filename, dpi=300)
-            plt.close()
+            plt.close('all')
             report['failed_delay_plot'] = failed_plot_filename
     except ImportError:
         if logger:
             logger.warning("Matplotlib não disponível - visualizações não geradas")
-    report_filename = os.path.join(
-        output_dir, f"{report_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    )
-    with open(report_filename, 'w') as f:
+    # Before saving report JSON
+    report_base = os.path.join(report_dir, report_prefix)
+    base_json = report_base + ".json"
+    # Garante que o diretório existe ANTES de salvar
+    os.makedirs(os.path.dirname(base_json), exist_ok=True)
+    with open(base_json, 'w') as f:
         json.dump(report, f, indent=2)
+    rotate_and_limit_files(report_base, ".json", max_old_runs)
+
+    # Now save the file with timestamp for history, only if base_json exists
+    report_filename = os.path.join(
+        report_dir, f"{report_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
+    if os.path.exists(base_json):
+        shutil.copy2(base_json, report_filename)
+    else:
+        if logger:
+            logger.error(f"Base report file not found for copy: {base_json}")
+
+    # For PNGs, do the same: save WITHOUT timestamp, run rotation, then copy to timestamp
+    if 'success_delay_plot' in report:
+        png_base = os.path.splitext(os.path.join(png_dir, 'delay_success_analysis.png'))[0]
+        base_png = png_base + ".png"
+        if os.path.abspath(report['success_delay_plot']) != os.path.abspath(base_png):
+            safe_copy2(report['success_delay_plot'], base_png, logger=logger)
+        rotate_and_limit_files(png_base, ".png", max_old_runs)
+        ts_png = os.path.join(png_dir, f"delay_success_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        if os.path.exists(base_png):
+            safe_copy2(base_png, ts_png, logger=logger)
+        else:
+            if logger:
+                logger.error(f"Base PNG not found for copy: {base_png}")
+
+    if 'failed_delay_plot' in report:
+        png_base = os.path.splitext(os.path.join(png_dir, 'delay_failed_analysis.png'))[0]
+        base_png = png_base + ".png"
+        if os.path.abspath(report['failed_delay_plot']) != os.path.abspath(base_png):
+            safe_copy2(report['failed_delay_plot'], base_png, logger=logger)
+        rotate_and_limit_files(png_base, ".png", max_old_runs)
+        ts_png = os.path.join(png_dir, f"delay_failed_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        if os.path.exists(base_png):
+            safe_copy2(base_png, ts_png, logger=logger)
+        else:
+            if logger:
+                logger.error(f"Base PNG not found for copy: {base_png}")
     if logger:
         logger.section("FINAL SUMMARY")
         logger.success(f"✔ Success: {report['summary']['success']}/{report['summary']['total_files']} ({report['summary']['success']/report['summary']['total_files']:.1%})")
@@ -341,10 +450,14 @@ def scraper(
     state_file="./state/download_state.json",
     log_file="./logs/process_log.log",
     report_prefix="download_report",
-    disable_logging=False,               
-    dataset_name=None,                   
-    disable_progress_bar=False,          
+    disable_logging=False,              
+    disable_terminal_logging=False,       
+    dataset_name=None,
+    disable_progress_bar=False,
     output_dir="./output",
+    max_old_logs=25,
+    max_old_runs=25,
+    ray_instance=None,
 ):
     init(autoreset=True)
     yellow_title = "Starting download" if not dataset_name else f"Starting download of {dataset_name}"
@@ -365,12 +478,17 @@ def scraper(
 {Fore.YELLOW}{'='*60}{Fore.RESET}
 """
     logger = None
-    # Ensure log file directory exists and clear file
     if not disable_logging:
         if log_file:
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
-        logger = CustomLogger(banner=BANNER, log_file_path=log_file)
-        print(BANNER)
+        logger = CustomLogger(
+            banner=BANNER,
+            log_file_path=log_file,
+            max_old_logs=max_old_logs
+        )
+        logger.disable_terminal_logging = disable_terminal_logging  # <-- Set attribute
+        if not disable_terminal_logging:
+            print(BANNER)
 
     # Ensure output_dir exists (for report PNGs/JSON)
     if output_dir:
@@ -410,21 +528,23 @@ def scraper(
     if user_agents is None:
         user_agents = DEFAULT_USER_AGENTS
 
-    ray_cpu = min(max_concurrent, os.cpu_count())
-    ray.shutdown()
-    ray.init(
-        num_cpus=ray_cpu,
-        include_dashboard=False,
-        logging_level=logging.ERROR,
-        ignore_reinit_error=True,
-    )
+    # Only create/shutdown Ray if not provided
+    ray_created = False
+    if ray_instance is None:
+        ray_cpu = min(max_concurrent, os.cpu_count())
+        ray.shutdown()
+        ray.init(
+            num_cpus=ray_cpu,
+            include_dashboard=False,
+            logging_level=logging.ERROR,
+            ignore_reinit_error=True,
+        )
+        ray_created = True
 
     if logger: 
         logger.info(f"Ray version: {ray.__version__}")
-    if logger: 
         logger.info(f"Available CPUs: {ray.available_resources()['CPU']}")
-    if logger: 
-        logger.info(f"Using CPUs: {ray_cpu}")
+        logger.info(f"Using CPUs: {min(max_concurrent, os.cpu_count())}")
 
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
@@ -439,7 +559,8 @@ def scraper(
     if not html_content:
         if logger: 
             logger.error("Failed to access main page. Check connection and URL.")
-        ray.shutdown()
+        if ray_created:
+            ray.shutdown()
         return
     file_links = extract_file_links(html_content, base_url, file_patterns)
     if max_files:
@@ -447,7 +568,8 @@ def scraper(
     if not file_links:
         if logger: 
             logger.error("No valid links found. Check extraction pattern.")
-        ray.shutdown()
+        if ray_created:
+            ray.shutdown()
         return
     if logger: 
         logger.success(f"Found {len(file_links)} files to download")
@@ -470,9 +592,11 @@ def scraper(
         results, state_handler, 
         report_prefix=report_prefix, 
         logger=logger,
-        output_dir=output_dir         # <-- Pass to generate_report
+        output_dir=output_dir,         # <-- Pass to generate_report
+        max_old_runs=max_old_runs  # <-- pass option
     )
-    ray.shutdown()
+    if ray_created:
+        ray.shutdown()
 
 def cli():
     import argparse
@@ -492,6 +616,8 @@ def cli():
     parser.add_argument("--dataset-name", type=str, default=None, help="Dataset name for banner")
     parser.add_argument("--disable-progress-bar", action="store_true", help="Disable tqdm progress bar")
     parser.add_argument("--output-dir", type=str, default=".", help="Directory for report PNGs and JSON")
+    parser.add_argument("--max-old-logs", type=int, default=25, nargs='?', help="Max old log files to keep (default: 25, None disables rotation)")
+    parser.add_argument("--max-old-runs", type=int, default=25, nargs='?', help="Max old report/png runs to keep (default: 25, None disables rotation)")
     args = parser.parse_args()
 
     headers = None
@@ -534,7 +660,9 @@ def cli():
             disable_logging=args.disable_logging,
             dataset_name=args.dataset_name,
             disable_progress_bar=args.disable_progress_bar,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            max_old_logs=args.max_old_logs,
+            max_old_runs=args.max_old_runs  # <-- Pass to scraper
         )
     finally:
         ray.shutdown()
