@@ -5,7 +5,6 @@ import logging
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.abspath(os.path.join(PROJECT_ROOT, "src"))
-print(PROJECT_ROOT, SRC_DIR)
 
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, SRC_DIR)
