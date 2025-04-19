@@ -6,8 +6,6 @@ Installation
 
 Command Line Interface
 ------------------------
-
-
 .. code-block:: bash
 
    git clone https://github.com/seuusuario/Scraper-Lib.git
