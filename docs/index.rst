@@ -4,8 +4,8 @@ Scraper Lib
 =====================
 
 .. image:: ./logo.png
-   :width: 200px
-   
+   :width: 300px
+   :alt: Scraper-Lib Logo
 Welcome to the documentation for Scraper Lib!
 
 .. toctree::
