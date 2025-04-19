@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import os
 import pytest
-from package import ScraperLib
+from scraper_lib import ScraperLib
 
 class DummyState:
     def __init__(self):
