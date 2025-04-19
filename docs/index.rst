@@ -7,7 +7,7 @@ Scraper Lib
    :width: 300px
    :alt: Scraper-Lib Logo
 
-#
+
 
 Welcome to the documentation for Scraper Lib!
 

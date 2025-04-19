@@ -1,20 +1,12 @@
-Usage
-=====
+import os
 
-Command Line Interface
----------------------
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-.. code-block:: bash
+from src.Scraperlib import ScraperLib #noqa # type: ignore
 
-   python -m ScraperLib.cli --url <URL> --patterns .csv .zip --dir data --max-files 10
+if __name__ == "__main__":
 
-Programmatic Usage
-------------------
-
-.. code-block:: python
-
-   from ScraperLib import ScraperLib
-       scraper = ScraperLib(
+    scraper = ScraperLib(
         base_url="https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
         file_patterns=[".csv", ".parquet", ".zip"],
         download_dir="tlc_data",
@@ -29,4 +21,3 @@ Programmatic Usage
         max_old_runs=10,
     )
     scraper.run()
-   # ... exemplo de uso ...
