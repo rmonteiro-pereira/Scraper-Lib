@@ -444,6 +444,21 @@
 <section id="programmatic-usage">
 <h2>Programmatic Usage<a class="headerlink" href="#programmatic-usage" title="Link to this heading">#</a></h2>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ScraperLib</span><span class="w"> </span><span class="kn">import</span> <span class="n">ScraperLib</span>
+    <span class="n">scraper</span> <span class="o">=</span> <span class="n">ScraperLib</span><span class="p">(</span>
+     <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page&quot;</span><span class="p">,</span>
+     <span class="n">file_patterns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;.csv&quot;</span><span class="p">,</span> <span class="s2">&quot;.parquet&quot;</span><span class="p">,</span> <span class="s2">&quot;.zip&quot;</span><span class="p">],</span>
+     <span class="n">download_dir</span><span class="o">=</span><span class="s2">&quot;tlc_data&quot;</span><span class="p">,</span>
+     <span class="n">state_file</span><span class="o">=</span><span class="s2">&quot;state/download_state.json&quot;</span><span class="p">,</span>
+     <span class="n">log_file</span><span class="o">=</span><span class="s2">&quot;logs/process_log.log&quot;</span><span class="p">,</span>
+     <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span><span class="p">,</span>
+     <span class="n">incremental</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+     <span class="n">max_files</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+     <span class="n">max_concurrent</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+     <span class="n">dataset_name</span><span class="o">=</span><span class="s2">&quot;TLC DATA&quot;</span><span class="p">,</span>
+     <span class="n">max_old_logs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+     <span class="n">max_old_runs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+ <span class="p">)</span>
+ <span class="n">scraper</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
 <span class="c1"># ... exemplo de uso ...</span>
 </pre></div>
 </div>
