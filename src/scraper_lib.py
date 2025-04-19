@@ -20,10 +20,6 @@ from datetime import datetime
 import gc
 import shutil
 from CustomLogger import CustomLogger
-import numpy as np
-from datetime import datetime
-import gc
-import shutil
 from src.DownloadState import DownloadState
 
 
