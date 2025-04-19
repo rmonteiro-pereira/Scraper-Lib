@@ -1,18 +1,17 @@
+import os
+import sys
 import requests
 import time
 import logging
 from bs4 import BeautifulSoup
-import os
 from typing import Any, Dict, List, Optional, Union
 os.environ['RAY_DEDUP_LOGS'] = "0"
 os.environ["RAY_SILENT_MODE"] = "1"
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tqdm import tqdm
 from urllib.parse import urljoin
 import random
 import json
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 import ray
 from collections import deque
 from colorama import init, Fore, Style
@@ -23,34 +22,32 @@ import shutil
 from src.CustomLogger import CustomLogger
 from src.DownloadState import DownloadState
 
-
+# Assume que src está um nível abaixo do root do projeto
+PROJECT_ROOT_FROM_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class ScraperLib:
     """
     Library for parallel file extraction and download, report generation, and log/result rotation.
-
-    Allows downloading files from a web page in parallel using Ray,
-    managing download state, generating reports and charts, and rotating old logs and reports.
     """
 
     def __init__(
         self,
         base_url: str,
         file_patterns: List[str],
-        download_dir: str = "data",
+        download_dir: str = "tlc_data", # Default relative path
+        state_file: str = "state/download_state.json", # Default relative path
+        log_file: str = "logs/process_log.log", # Default relative path
+        output_dir: str = "output", # Default relative path
         incremental: bool = False,
         max_files: Optional[int] = None,
         max_concurrent: Optional[int] = None,
         headers: Optional[Dict[str, Any]] = None,
         user_agents: Optional[List[str]] = None,
-        state_file: str = "./state/download_state.json",
-        log_file: str = "./logs/process_log.log",
         report_prefix: str = "download_report",
         disable_logging: bool = False,
         disable_terminal_logging: bool = False,
         dataset_name: Optional[str] = None,
         disable_progress_bar: bool = False,
-        output_dir: str = "./output",
         max_old_logs: int = 25,
         max_old_runs: int = 25,
         ray_instance: Optional[Any] = None,
@@ -58,59 +55,65 @@ class ScraperLib:
         initial_delay: float = 1.0,
         max_delay: float = 60.0,
         max_retries: int = 5,
+        project_root: Optional[str] = None # Allow overriding project root
     ) -> None:
         """
-        Initialize ScraperLib with the provided options.
+        Initializes the ScraperLib instance. Paths are relative to project root unless absolute.
 
         Args:
-            base_url (str): Base URL to extract files from.
-            file_patterns (list): List of file patterns to download (e.g., [".csv", ".zip"]).
-            download_dir (str): Directory to save downloaded files.
-            incremental (bool): If True, enables incremental mode (does not download already downloaded files).
-            max_files (int): Limits the number of files to download.
-            max_concurrent (int): Maximum number of parallel downloads.
-            headers (dict): Custom HTTP headers.
-            user_agents (list): List of user-agents for rotation.
-            state_file (str): Path to the state file.
-            log_file (str): Path to the log file.
-            report_prefix (str): Prefix for generated reports.
-            disable_logging (bool): Disables logging.
-            disable_terminal_logging (bool): Disables terminal logging.
-            dataset_name (str): Dataset name for display.
-            disable_progress_bar (bool): Disables progress bar.
-            output_dir (str): Directory for reports and PNGs.
-            max_old_logs (int): Maximum number of old logs to keep.
-            max_old_runs (int): Maximum number of old reports to keep.
-            ray_instance: Already initialized Ray instance (optional).
-            chunk_size (int or str): Chunk size in bytes or as a string (e.g. '10mb', '1gb').
-            initial_delay (float): Initial delay between retries (seconds).
-            max_delay (float): Maximum delay between retries (seconds).
-            max_retries (int): Maximum number of download retries.
+            # ... (other args) ...
+            project_root (Optional[str]): Explicit project root path. If None, inferred from this file's location.
         """
-        self.base_url: str = base_url
-        self.file_patterns: List[str] = file_patterns
-        self.download_dir: str = download_dir
-        self.incremental: bool = incremental
-        self.max_files: Optional[int] = max_files
-        self.max_concurrent: Optional[int] = max_concurrent
-        self.headers: Optional[Dict[str, Any]] = headers
-        self.user_agents: Optional[List[str]] = user_agents
-        self.state_file: str = state_file
-        self.log_file: str = log_file
-        self.report_prefix: str = report_prefix
-        self.disable_logging: bool = disable_logging
-        self.disable_terminal_logging: bool = disable_terminal_logging
-        self.dataset_name: Optional[str] = dataset_name
-        self.disable_progress_bar: bool = disable_progress_bar
-        self.output_dir: str = output_dir
-        self.max_old_logs: int = max_old_logs
-        self.max_old_runs: int = max_old_runs
-        self.ray_instance: Optional[Any] = ray_instance
-        self.chunk_size: int = self._parse_chunk_size(chunk_size) if isinstance(chunk_size, str) else chunk_size
-        self.initial_delay: float = initial_delay
-        self.max_delay: float = max_delay
-        self.max_retries: int = max_retries
-        self.logger: Optional[CustomLogger] = None
+        self.base_url = base_url
+        self.file_patterns = file_patterns
+        self.incremental = incremental
+        self.max_files = max_files
+        self.max_concurrent = max_concurrent or os.cpu_count() or 16
+        self.headers = headers # Will be processed in run()
+        self.user_agents = user_agents # Will be processed in run()
+        self.report_prefix = report_prefix
+        self.disable_logging = disable_logging
+        self.disable_terminal_logging = disable_terminal_logging
+        self.dataset_name = dataset_name or "Dataset"
+        self.disable_progress_bar = disable_progress_bar
+        self.max_old_logs = max_old_logs
+        self.max_old_runs = max_old_runs
+        self.ray_instance = ray_instance # Will be processed in run()
+        self.chunk_size = self._parse_chunk_size(chunk_size) if isinstance(chunk_size, str) else chunk_size
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.max_retries = max_retries
+
+        # --- Process and create paths ---
+        self.project_root = os.path.abspath(project_root or PROJECT_ROOT_FROM_SRC)
+
+        # Convert to absolute paths based on project_root
+        self.download_dir = os.path.join(self.project_root, download_dir) if not os.path.isabs(download_dir) else download_dir
+        self.state_file = os.path.join(self.project_root, state_file) if not os.path.isabs(state_file) else state_file
+        self.log_file = os.path.join(self.project_root, log_file) if not os.path.isabs(log_file) else log_file
+        self.output_dir = os.path.join(self.project_root, output_dir) if not os.path.isabs(output_dir) else output_dir
+        self.report_dir = os.path.join(self.output_dir, "reports") # Define report dir based on output_dir
+
+        # Ensure directories exist
+        os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+        os.makedirs(self.download_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.report_dir, exist_ok=True) # Also create report directory
+        # --- End path processing ---
+
+        # Logger and state handler are now initialized in run() or lazily,
+        # as they depend on the log file path which is now absolute.
+        # We store the paths here, but initialization happens later.
+        self.logger: Optional[logging.Logger] = None # Initialize later
+        self.state_handler: Optional[DownloadState] = None # Initialize later
+
+        self.session = requests.Session() # Session can be initialized here
+        # Headers will be updated in run()
+        self.files_to_download: List[Dict[str, Any]] = []
+        self.results: List[Dict[str, Any]] = []
+        self.start_time: Optional[float] = None
+        self.end_time: Optional[float] = None
 
     def _safe_copy2(
         self,
@@ -729,7 +732,7 @@ class ScraperLib:
             'Sec-Fetch-User': '?1',
         }
         DEFAULT_USER_AGENTS = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 0.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",

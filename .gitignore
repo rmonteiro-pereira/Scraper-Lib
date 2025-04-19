@@ -14,3 +14,4 @@ wheels/
 *.txt
 *.png
 /docs/_build
+!logo.png
