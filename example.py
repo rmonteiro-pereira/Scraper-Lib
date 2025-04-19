@@ -4,7 +4,7 @@ import logging
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-from src.scraper_lib import ScraperLib #noqa # type: ignore
+from src.Scraperlib import ScraperLib #noqa # type: ignore
 
 if __name__ == "__main__":
     # Define runtime_env for Ray workers to find the 'src' package

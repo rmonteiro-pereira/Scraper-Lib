@@ -1,7 +1,7 @@
-scraper_lib
+ScraperLib
 ===========
 
-.. automodule:: src.scraper_lib
+.. automodule:: src.ScraperLib
    :members:
    :undoc-members:
    :show-inheritance:
