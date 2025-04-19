@@ -26,11 +26,11 @@ jobs:
       - name: Install dependencies
         run: |
           pip install uv
-          uv sync --all-group
+          uv sync --all-groups
           cd docs && uv run sphinx-build -b html . _build/html
           
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/_build/html/ 
+          publish_dir: ./docs/_build/html 
