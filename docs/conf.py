@@ -2,7 +2,7 @@ import os
 import sys
 # Adiciona o diretório raiz do projeto (um nível acima de 'docs') ao sys.path
 sys.path.insert(0, os.path.abspath('..'))
-
+sys.path.insert(0, os.path.abspath('../src'))
 project = 'ScraperLib'
 copyright = '2025, Seu Nome'
 author = 'Seu Nome'
@@ -24,12 +24,9 @@ html_static_path = ['_static']
 
 # Adicione ou modifique estas opções do tema
 html_theme_options = {
+    "navbar_end": ["version-switcher", "theme-switcher", "navbar-icon-links"],
     "switcher": {
-        "json_url": "", # Deixe vazio para desabilitar
-        "version_match": "", # Deixe vazio para desabilitar
+        "json_url": "https://example.com/versions.json",
+        "version_match": "latest",
     },
-    "navbar_start": ["navbar-logo"],
-    "navbar_center": ["navbar-nav"],
-    "navbar_end": ["navbar-icon-links", "theme-switcher"],
-    # Adicione outras opções do pydata-sphinx-theme se necessário
 }

@@ -6,10 +6,11 @@ We welcome contributions! Here's how to get started:
 Development Setup
 -----------------
 .. code-block:: bash
-   # Clone and install in development mode
-   git clone https://github.com/rmonteiro-pereira/Scraper-Lib.git
-   cd Scraper-Lib
-   pip install -e .[dev]
+   
+# Clone and install in development mode
+git clone https://github.com/rmonteiro-pereira/Scraper-Lib.git
+cd Scraper-Lib
+pip install -e .[dev]
 
 Workflow
 --------
