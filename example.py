@@ -3,10 +3,9 @@ import os
 import ray  
 import logging  
 
-# Always resolve paths relative to this script's directory
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
-SRC_DIR = SCRIPT_DIR
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.abspath(os.path.join(PROJECT_ROOT, "src"))
+print(PROJECT_ROOT, SRC_DIR)
 
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, SRC_DIR)
@@ -26,11 +25,11 @@ if __name__ == "__main__":
         scraper = ScraperLib(
             base_url="https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
             file_patterns=[".csv", ".parquet", ".zip"],
-            download_dir="../tlc_data",
+            download_dir="./tlc_data",
             incremental=True,
-            state_file="../state/download_state.json",
+            state_file="./state/download_state.json",
             log_file="../logs/process_log.log",
-            output_dir="../output",
+            output_dir="./output",
             max_files=2,
             max_concurrent=16,
             dataset_name="TLC DATA",
@@ -41,9 +40,9 @@ if __name__ == "__main__":
         )
         scraper.run()
     # Count how many .log files are in the logs directory
-    log_dir = "../logs"
+    log_dir = "./logs"
     log_count = len([f for f in os.listdir(log_dir) if f.endswith(".log")])
     print(f"Total .log files in '{log_dir}': {log_count}")
-    json_dir = "../output/reports"
+    json_dir = "./output/reports"
     json_count = len([f for f in os.listdir(json_dir) if f.endswith(".json")])
     print(f"Total json files in '{json_dir}': {json_count}")
