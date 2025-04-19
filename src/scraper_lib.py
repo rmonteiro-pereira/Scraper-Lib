@@ -16,20 +16,11 @@ import ray
 from collections import deque
 from colorama import init, Fore, Style
 from CustomLogger import CustomLogger
-try:
-    from DownloadState import DownloadState
-    print("foi normal")
-except (ModuleNotFoundError,ImportError):
-    try:
-        from .DownloadState import DownloadState
-        print("foi com o relativo (.)")
-    except (ModuleNotFoundError,ImportError):
-        print("foi com src")
-        from src.DownloadState import DownloadState
 import numpy as np
 from datetime import datetime
 import gc
 import shutil
+from src.DownloadState import DownloadState
 
 
 
