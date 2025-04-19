@@ -1,0 +1,140 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ master ] # Or your default branch
+  pull_request:
+    branches: [ master ] # Or your default branch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write 
+
+
+jobs:
+  test-lint-type-build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python "3.12"
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        pip install uv
+        uv sync --all-groups
+
+    - name: Lint with Ruff
+      run: |
+        ruff check src tests
+        ruff format src tests --check
+
+    # - name: Type check with Mypy
+    #   run: |
+    #     mypy src
+
+    - name: Run tests with Pytest
+      run: |
+        pytest
+
+  build-docs:
+    runs-on: ubuntu-latest
+    needs: test-lint-type-build # Run only if tests pass
+    if: github.ref == 'refs/heads/main' # Build docs only on main branch merge
+
+    steps:
+        - name: Checkout
+          uses: actions/checkout@v4
+        
+        - name: Set up Python
+          uses: actions/setup-python@v4
+          with:
+            python-version: '3.12'
+            
+        - name: Install dependencies
+          run: |
+            pip install uv
+            uv sync --all-groups
+            cd docs && uv run sphinx-build -b html . _build/html
+              
+  deploy-docs:
+    runs-on: ubuntu-latest
+    needs: build-docs # Run only if tests pass
+    if: github.ref == 'refs/heads/main' # Build docs only on main branch merge
+    steps:    
+        - name: Setup Pages
+          uses: actions/configure-pages@v5
+            
+        - name: Upload artifact
+          uses: actions/upload-pages-artifact@v3
+          with:
+            path: 'docs/_build/html'  # Removed extra space
+              
+        - name: Deploy to GitHub Pages
+          uses: actions/deploy-pages@v4
+   
+#   publish-pypi:
+#     runs-on: ubuntu-latest
+#     needs: test-lint-type-build # Run only if tests pass
+#     # Trigger only when a tag matching v*.*.* is created
+#     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
+#     environment:
+#       name: pypi
+#       url: https://pypi.org/p/scraper-lib-rmp # Link to PyPI page (update name)
+
+#     permissions:
+#       # IMPORTANT: Required for trusted publishing
+#       id-token: write
+
+#     steps:
+#     - name: Checkout repository
+#       uses: actions/checkout@v4
+
+#     - name: Set up Python
+#       uses: actions/setup-python@v5
+#       with:
+#         python-version: '3.12'
+
+#     - name: Install build dependencies
+#       run: |
+#         python -m pip install --upgrade pip build
+
+#     - name: Build package
+#       run: python -m build
+
+#     - name: Publish package to PyPI
+#       # Uses PyPI's trusted publisher flow (requires setup on PyPI)
+#       uses: pypa/gh-action-pypi-publish@release/v1
+#       # No API token needed here if trusted publishing is configured
+
+    # Optional: Publish to TestPyPI first (requires separate environment/secrets)
+    # - name: Publish package to TestPyPI
+    #   uses: pypa/gh-action-pypi-publish@release/v1
+    #   with:
+    #     repository-url: https://test.pypi.org/legacy/
+    #     # Use API token stored as secret for TestPyPI if not using trusted publishing
+    #     # password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+
+
+# **Before Publishing:**
+
+# 1.  **Test Locally:**
+#     *   `pip install -e .[dev]`
+#     *   `ruff check src tests`
+#     *   `ruff format src tests`
+#     *   `mypy src`
+#     *   `pytest`
+#     *   `sphinx-build -b html docs docs/_build/html`
+# 2.  **Configure PyPI:**
+#     *   Create accounts on [PyPI](https://pypi.org/) and [TestPyPI](https://test.pypi.org/).
+#     *   Set up **Trusted Publishing** on PyPI for your project and this GitHub Actions workflow. This avoids needing API tokens in GitHub secrets. Follow the PyPI documentation for this.
+# 3.  **Push to GitHub:** Commit all changes and push to your repository.
+# 4.  **Tag for Release:** Once ready, create a Git tag (e.g., `git tag v0.1.0`, `git push origin v0.1.0`). This will trigger the `publish-pypi` job in the workflow.
