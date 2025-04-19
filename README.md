@@ -1,12 +1,25 @@
-# NYC TLC Taxi Extraction Robot
+# ScraperLib
 
 ![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
 ![Ray](https://img.shields.io/badge/Ray-Parallel-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-## 🚕 About
+---
 
-**NYC TLC Taxi Extraction Robot** is a robust, parallelized Python tool for downloading and analyzing the official New York City Taxi & Limousine Commission (TLC) trip record datasets. It leverages [Ray](https://ray.io/) for high-performance parallel downloads, handles anti-bot mechanisms (like 403 errors), and provides detailed reports and visualizations of the download process.
+<pre>
+<span style="color:#FFD700;">   _____                                 _      _ _     </span>
+<span style="color:#00BFFF;">  / ____|                               | |    (_) |    </span>
+<span style="color:#32CD32;"> | (___   ___ _ __ __ _ _ __   ___ _ __ | |     _| |__  </span>
+<span style="color:#FFA500;">  \___ \ / __| '__/ _` | '_ \ / _ \ '__|| |    | | '_ \ </span>
+<span style="color:#FF69B4;">  ____) | (__| | | (_| | |_) |  __/ |   | |____| | |_) |</span>
+<span style="color:#FF6347;"> |_____/ \___|_|  \__,_| .__/ \___|_|   |______|_|_.__/ </span>
+<span style="color:#CCCCCC;">                      | |                               </span>
+<span style="color:#CCCCCC;">                      |_|                               </span>
+
+<span style="color:#00FF00;">==============================================================</span>                                  
+<span style="color:#FFD700;">         Starting download of ScraperLib</span>
+<span style="color:#00FF00;">==============================================================</span>                                  
+</pre>
 
 ---
 
@@ -28,8 +41,8 @@
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/taxi-extraction-robot.git
-   cd taxi-extraction-robot
+   git clone https://github.com/yourusername/scraper-lib.git
+   cd scraper-lib
    ```
 
 2. **Install dependencies:**
@@ -58,7 +71,7 @@
 ### CLI
 
 ```bash
-python -m package.cli --url <URL> --patterns .csv .zip --dir data --max-files 10
+python -m scraper_lib.cli --url <URL> --patterns .csv .zip --dir data --max-files 10
 ```
 
 **Main CLI options:**
@@ -87,18 +100,18 @@ python -m package.cli --url <URL> --patterns .csv .zip --dir data --max-files 10
 
 See all options with:
 ```bash
-python -m package --help
+python -m scraper_lib --help
 ```
 
 ### Programmatic Usage
 
 ```python
-from package import ScraperLib
+from scraper_lib import ScraperLib
 
 scraper = ScraperLib(
-    base_url="https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
+    base_url="https://example.com/data",
     file_patterns=[".csv", ".parquet", ".zip"],
-    download_dir="tlc_data",
+    download_dir="data",
     incremental=True,
     max_files=2,
     max_concurrent=16,
@@ -106,7 +119,7 @@ scraper = ScraperLib(
     initial_delay=1.0,
     max_delay=60.0,
     max_retries=5,
-    dataset_name="TLC DATA"
+    dataset_name="MY DATASET"
 )
 scraper.run()
 ```
@@ -142,18 +155,18 @@ pytest tests
 
 ```
 .
-├── package.py               # Main library
-├── state.py                 # Download state management
-├── CustomLogger.py          # Custom logger
-├── example.py               # Example usage
-├── requirements.txt         # Dependencies
-├── pyproject.toml           # Project metadata
-├── output/                  # Reports and PNGs
-├── tlc_data/                # Downloaded files
-├── tests/                   # Unit tests
-├── download_state.json      # Download state (auto-generated)
-├── download_report_*.json   # Download reports (auto-generated)
-└── delay_*_analysis.png     # Visualizations (auto-generated)
+├── scraper_lib.py              # Main library
+├── state.py                    # Download state management
+├── CustomLogger.py             # Custom logger
+├── example.py                  # Example usage
+├── requirements.txt            # Dependencies
+├── pyproject.toml              # Project metadata
+├── output/                     # Reports and PNGs
+├── data/                       # Downloaded files
+├── tests/                      # Unit tests
+├── download_state.json         # Download state (auto-generated)
+├── download_report_*.json      # Download reports (auto-generated)
+└── delay_*_analysis.png        # Visualizations (auto-generated)
 ```
 
 ---
@@ -172,8 +185,8 @@ This project is licensed under the MIT License.
 
 ## 📬 Contact
 
-Questions or suggestions? Open an issue or contact [your-email@example.com](mailto:your-email@example.com).
+Questions or suggestions? Open an issue or contact [rmonteiropereira1@gmail.com](mailto:rmonteiropereira1@gmail.com).
 
 ---
 
-*Happy data hunting! 🚖*
+*Happy data hunting with ScraperLib! 🚀*
