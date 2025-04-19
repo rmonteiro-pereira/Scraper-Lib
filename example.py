@@ -1,4 +1,4 @@
-from package import ScraperLib
+from scraper_lib import ScraperLib
 import ray
 import logging
 import os

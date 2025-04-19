@@ -3,7 +3,7 @@ import time
 import logging
 from bs4 import BeautifulSoup
 import os
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 os.environ['RAY_DEDUP_LOGS'] = "0"
 os.environ["RAY_SILENT_MODE"] = "1"
 from tqdm import tqdm
