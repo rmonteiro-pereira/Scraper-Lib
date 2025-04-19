@@ -13,10 +13,12 @@ def test_init_and_generate(tmp_path):
 def test_load_and_save_state(tmp_path):
     state_file = tmp_path / "state.json"
     state = DownloadState(state_file=str(state_file), incremental=False)
-    state.state['custom'] = 123
+    url = "http://example.com/file.csv"
+    state.add_completed(url, "file.csv", 123)
     state.save_state()
     state2 = DownloadState(state_file=str(state_file), incremental=True)
-    assert state2.state['custom'] == 123
+    file_id = state2.get_file_id(url)
+    assert file_id in state2.state['completed']
 
 def test_add_completed_and_is_completed(tmp_path):
     state_file = tmp_path / "state.json"
@@ -44,8 +46,9 @@ def test_add_delay_success_and_failed(tmp_path):
     assert state.state['delays_success']
     assert state.state['delays_failed']
 
-def test_get_file_id_is_md5():
-    state = DownloadState(state_file=":memory:", incremental=False)
+def test_get_file_id_is_md5(tmp_path):
+    state_file = tmp_path / "state.json"
+    state = DownloadState(state_file=str(state_file), incremental=False)
     url = "http://example.com/file.csv"
     file_id = state.get_file_id(url)
     import hashlib
