@@ -1,11 +1,10 @@
 import sys
 import os
 
-# Adiciona a raiz do projeto ao sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import os
-from state import DownloadState
+from DownloadState import DownloadState
 
 def test_state_creation(tmp_path):
     state_file = tmp_path / "state.json"

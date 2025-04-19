@@ -28,6 +28,10 @@ class DownloadState:
         """
         self.state_file: str = state_file
         self._cache: Dict[str, Any] = {}  # Local cache to reduce disk access
+        # Garante que o diretório existe
+        state_dir = os.path.dirname(os.path.abspath(self.state_file))
+        if state_dir and not os.path.exists(state_dir):
+            os.makedirs(state_dir, exist_ok=True)
         if incremental:
             self.load_state()
         else:
@@ -35,7 +39,7 @@ class DownloadState:
 
     def generate(self) -> Dict[str, Any]:
         """
-        Initialize a fresh state structure.
+        Initialize a fresh state structure and salva no disco.
 
         Returns:
             dict: The initialized state dictionary.
@@ -65,6 +69,9 @@ class DownloadState:
                 }
             }
         }
+        # Salva imediatamente o estado inicial
+        with open(self.state_file, 'w', encoding='utf-8') as f:
+            json.dump(self._cache, f, indent=2)
         return self._cache
 
     def _atomic_file_operation(self, operation: Callable[[], None]) -> None:
