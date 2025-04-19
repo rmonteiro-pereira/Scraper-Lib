@@ -1,27 +1,36 @@
 name: Deploy Documentation
 
+
+  # Allows you to run this workflow manually from the Actions tab
+
+
+
 on:
   push:
     branches: [ main ]  # Trigger on pushes to main branch
+
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
       
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.12'
           
       - name: Install dependencies
         run: |
-          pip install sphinx sphinx-rtd-theme
-          cd docs && make html
+          pip install uv
+          uv sync
+          cd docs && sphinx-build -b html . _build/html
           
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/_build/html  # Sphinx output directory
+          publish_dir: ./docs/_build/html/ 
