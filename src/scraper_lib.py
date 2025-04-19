@@ -816,7 +816,7 @@ class ScraperLib:
             ray.shutdown()
 
     @staticmethod
-    def cli() -> None:
+    def scrapercli() -> None:
         """
         Command-line interface to run ScraperLib.
 
