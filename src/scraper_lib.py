@@ -18,10 +18,13 @@ from colorama import init, Fore, Style
 from CustomLogger import CustomLogger
 try:
     from DownloadState import DownloadState
-except ImportError:
+    print("foi normal")
+except (ModuleNotFoundError,ImportError):
     try:
         from .DownloadState import DownloadState
-    except ImportError:
+        print("foi com o relativo (.)")
+    except (ModuleNotFoundError,ImportError):
+        print("foi com src")
         from src.DownloadState import DownloadState
 import numpy as np
 from datetime import datetime
