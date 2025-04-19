@@ -157,21 +157,23 @@ pytest tests
 ---
 
 ## 📝 Project Structure
-
 ```
 .
-├── scraper_lib.py              # Main library
-├── state.py                    # Download state management
-├── CustomLogger.py             # Custom logger
-├── example.py                  # Example usage
+├── src/
+│   ├── __init__.py             # Makes src a package
+│   ├── scraper_lib.py          # Main library
+│   ├── DownloadState.py        # Download state management
+│   ├── CustomLogger.py         # Custom logger
+├── example.py                  # Example usage (runnable from root)
 ├── requirements.txt            # Dependencies
 ├── pyproject.toml              # Project metadata
-├── output/                     # Reports and PNGs
+├── output/
+│   ├── pngs/                   # Download delay analysis PNGs
+│   └── reports/                # Download reports (JSON)
 ├── data/                       # Downloaded files
+├── logs/                       # Log files
+├── state/                      # Download state (auto-generated)
 ├── tests/                      # Unit tests
-├── download_state.json         # Download state (auto-generated)
-├── download_report_*.json      # Download reports (auto-generated)
-└── delay_*_analysis.png        # Visualizations (auto-generated)
 ```
 
 ---
