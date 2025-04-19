@@ -30,12 +30,11 @@ jobs:
       run: |
         pip install uv
         uv sync --all-groups
-        export PATH="$(pwd)/.venv/bin:$PATH"
 
     - name: Lint with Ruff
       run: |
-        ruff check src tests
-        ruff format src tests --check
+        uv run ruff check src tests
+        uv run ruff format src tests --check
 
     # - name: Type check with Mypy
     #   run: |
@@ -43,7 +42,7 @@ jobs:
 
     - name: Run tests with Pytest
       run: |
-        pytest
+        uv run pytest
 
   build-docs:
     runs-on: ubuntu-latest
