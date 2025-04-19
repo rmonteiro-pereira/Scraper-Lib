@@ -11,6 +11,15 @@ __all__ = [
 ]
 
 class CustomLogger(logging.Formatter):
+    """
+    Custom logger for colored terminal and file logging with sectioning and log rotation.
+
+    Args:
+        banner (str): Banner to display at the top of logs.
+        log_file_path (str): Path to the log file.
+        max_old_logs (int): Maximum number of old log files to keep.
+    """
+
     COLORS = {
         'INFO': '✔',
         'WARNING': '⚠',
@@ -20,6 +29,14 @@ class CustomLogger(logging.Formatter):
     }
 
     def __init__(self, banner="", log_file_path=None, max_old_logs=25):
+        """
+        Initialize the CustomLogger.
+
+        Args:
+            banner (str): Banner to display at the top of logs.
+            log_file_path (str): Path to the log file.
+            max_old_logs (int): Maximum number of old log files to keep.
+        """
         super().__init__()
         # Ensure log file ends with .log
         if log_file_path and not log_file_path.endswith(".log"):
@@ -83,10 +100,22 @@ class CustomLogger(logging.Formatter):
             logging.getLogger().addHandler(file_handler)
 
     def strip_ansi(self, line):
+        """
+        Remove ANSI color codes from a log line.
+
+        Args:
+            line (str): Log line.
+
+        Returns:
+            str: Cleaned log line.
+        """
         ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
         return ansi_escape.sub('', line)
 
     def redraw_logs(self):
+        """
+        Redraw all logs in the terminal, including the banner.
+        """
         if getattr(self, "disable_terminal_logging", False):
             return
         if os.name == 'nt':
@@ -99,6 +128,13 @@ class CustomLogger(logging.Formatter):
             print(line[1])
 
     def append_log_to_file(self, line, filename=None):
+        """
+        Append a log line to the log file.
+
+        Args:
+            line (str): Log line.
+            filename (str): Optional log file path.
+        """
         filename = filename or self.path_log_file
         if filename is not None:
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -106,9 +142,21 @@ class CustomLogger(logging.Formatter):
                 f.write(self.strip_ansi(line) + "\n")
 
     def _now(self):
+        """
+        Get the current timestamp as a string.
+
+        Returns:
+            str: Timestamp in [YYYY-MM-DD HH:MM:SS] format.
+        """
         return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
 
     def info(self, msg):
+        """
+        Log an info message.
+
+        Args:
+            msg (str): Message to log.
+        """
         add_time = any(msg.strip().startswith(tag) for tag in ("[TRY]", "[FAIL]", "[DONE]", "[SKIP]"))
         line = f"{self._now()} {Fore.CYAN}{msg}{Fore.RESET}" if add_time else f"{Fore.CYAN}{msg}{Fore.RESET}"
         item = ("info", line)
@@ -118,6 +166,12 @@ class CustomLogger(logging.Formatter):
         self.redraw_logs()
 
     def warning(self, msg):
+        """
+        Log a warning message.
+
+        Args:
+            msg (str): Message to log.
+        """
         add_time = any(msg.strip().startswith(tag) for tag in ("[TRY]", "[FAIL]", "[DONE]"))
         line = f"{self._now()} {Fore.YELLOW}{msg}{Fore.RESET}" if add_time else f"{Fore.YELLOW}{msg}{Fore.RESET}"
         item = ("warning", line)
@@ -127,6 +181,12 @@ class CustomLogger(logging.Formatter):
         self.redraw_logs()
 
     def error(self, msg):
+        """
+        Log an error message.
+
+        Args:
+            msg (str): Message to log.
+        """
         add_time = any(msg.strip().startswith(tag) for tag in ("[TRY]", "[FAIL]", "[DONE]"))
         line = f"{self._now()} {Fore.RED}{msg}{Fore.RESET}" if add_time else f"{Fore.RED}{msg}{Fore.RESET}"
         item = ("error", line)
@@ -136,6 +196,12 @@ class CustomLogger(logging.Formatter):
         self.redraw_logs()
 
     def section(self, title):
+        """
+        Log a section title.
+
+        Args:
+            title (str): Section title.
+        """
         # Section titles do not get a timestamp
         line = f"{Fore.CYAN}{'='*6} {title} {'='*6}{Fore.RESET}"
         item = ("section", line)
@@ -145,6 +211,12 @@ class CustomLogger(logging.Formatter):
         self.redraw_logs()
 
     def success(self, msg):
+        """
+        Log a success message.
+
+        Args:
+            msg (str): Message to log.
+        """
         if msg.startswith("[DONE] Downloaded"):
             filename = msg.split("Downloaded ")[1].split(" ")[0]
             self.LOG_BUFFER_TERMINAL[:] = [
@@ -163,10 +235,24 @@ class CustomLogger(logging.Formatter):
         self.redraw_logs()
 
     def get_buffers(self):
+        """
+        Get the terminal and file log buffers and the banner.
+
+        Returns:
+            tuple: (terminal_buffer, file_buffer, banner)
+        """
         return self.LOG_BUFFER_TERMINAL, self.LOG_BUFFER_FILE, self.BANNER
 
-    # Formatter override for file logging (removes ANSI and adds emoji/symbols)
     def format(self, record):
+        """
+        Format a log record for file output.
+
+        Args:
+            record (logging.LogRecord): Log record.
+
+        Returns:
+            str: Formatted log message.
+        """
         msg = super().format(record)
         for code in ['\033[31m', '\033[32m', '\033[33m', '\033[36m', '\033[39m', '\033[0m', '\033[1m']:
             msg = msg.replace(code, '')
