@@ -2,8 +2,8 @@ import sys
 import os
 import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
-
 from ScraperLib import ScraperLib
+
 
 @pytest.fixture
 def scraper(tmp_path):
