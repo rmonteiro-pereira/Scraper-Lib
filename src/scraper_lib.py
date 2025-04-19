@@ -6,6 +6,8 @@ import os
 from typing import Any, Dict, List, Optional, Union
 os.environ['RAY_DEDUP_LOGS'] = "0"
 os.environ["RAY_SILENT_MODE"] = "1"
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tqdm import tqdm
 from urllib.parse import urljoin
 import random
@@ -14,12 +16,11 @@ import matplotlib.pyplot as plt
 import ray
 from collections import deque
 from colorama import init, Fore, Style
-import sys
 import numpy as np
 from datetime import datetime
 import gc
 import shutil
-from CustomLogger import CustomLogger
+from src.CustomLogger import CustomLogger
 from src.DownloadState import DownloadState
 
 
@@ -882,7 +883,7 @@ Arguments:
         parser.add_argument("--max-files", type=int, default=None, help="Limit number of files to download")
         parser.add_argument("--max-concurrent", type=int, default=None, help="Max parallel downloads")
         parser.add_argument("--state-file", default="download_state.json", help="Path for download state file")
-        parser.add_argument("--log-file", default="taxi_extraction.log", help="Path for main log file")
+        parser.add_argument("--log-file", default="process_log.log", help="Path for main log file")
         parser.add_argument("--report-prefix", default="download_report", help="Prefix for report files")
         parser.add_argument("--headers", type=str, default=None, help="Path to JSON file with custom headers")
         parser.add_argument("--user-agents", type=str, default=None, help="Path to text file with custom user agents (one per line)")
