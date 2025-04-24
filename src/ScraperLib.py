@@ -313,6 +313,22 @@ class ScraperLib:
         self.max_retries = max_retries
 
         self._ray_initialized_internally = False
+        self._init_ray_if_needed()
+
+        # --- Logger and State Handler ---
+        self.logger = self._setup_logger() if not self.disable_logging else None
+        self.state_handler = DownloadState(state_file=self.state_file, incremental=self.incremental)
+
+        self.session = requests.Session()
+        self.files_to_download: List[Dict[str, Any]] = []
+        self.results: List[Dict[str, Any]] = []
+        self.start_time: Optional[float] = None
+        self.end_time: Optional[float] = None
+
+    def _init_ray_if_needed(self):
+        """
+        Initializes Ray if not already initialized and no external instance is provided.
+        """
         if self.ray_instance is None:
             if not ray.is_initialized():
                 try:
