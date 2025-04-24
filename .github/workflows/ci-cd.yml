@@ -29,7 +29,10 @@ jobs:
     - name: Install dependencies
       run: |
         pip install uv
+        uv venv .venv
+        source .venv/bin/activate
         uv sync --all-groups
+        uv pip install .
 
     - name: Lint with Ruff
       run: |

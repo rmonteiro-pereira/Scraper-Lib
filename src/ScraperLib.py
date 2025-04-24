@@ -20,13 +20,12 @@ from datetime import datetime
 import gc
 import shutil
 from CustomLogger import CustomLogger
-import os
 import portalocker
 import hashlib
 from pathlib import Path
 
-# Assume que src está um nível abaixo do root do projeto
 PROJECT_ROOT_FROM_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 class DownloadState:
     """
     Manages the persistent state of downloads, including completed, failed, and delay statistics.
@@ -187,17 +186,29 @@ class DownloadState:
         """
         return hashlib.md5(url.encode()).hexdigest()
 
-    def is_completed(self, url: str) -> bool:
+    def is_completed(self, url: str, data_dir: Optional[str] = None) -> bool:
         """
-        Check if a file has already been downloaded.
+        Check if a file has already been downloaded and exists on disk.
 
         Args:
             url (str): File URL.
+            data_dir (str, optional): Directory where files are stored.
 
         Returns:
-            bool: True if completed, False otherwise.
+            bool: True if completed and file exists, False otherwise.
         """
-        return self.get_file_id(url) in self._cache['completed']
+        file_id = self.get_file_id(url)
+        completed = file_id in self._cache['completed']
+        if completed and data_dir:
+            file_info = self._cache['completed'][file_id]
+            file_path = file_info.get('filepath')
+            if not file_path:
+                return False
+            # If file_path is not absolute, join with data_dir
+            if not os.path.isabs(file_path):
+                file_path = os.path.join(data_dir, file_path)
+            return os.path.exists(file_path)
+        return completed
 
     def add_completed(self, url: str, filepath: str, size: int) -> None:
         """
@@ -283,9 +294,6 @@ class ScraperLib:
         max_delay: float = 60.0,
         max_retries: int = 5,
     ) -> None:
-        """
-        Initializes the ScraperLib instance. All paths are made absolute using pathlib.
-        """
         # Use pathlib for robust absolute path handling
         self.download_dir = str(Path(download_dir).expanduser().resolve())
         self.state_file = str(Path(state_file).expanduser().resolve())
@@ -307,7 +315,10 @@ class ScraperLib:
         self.max_old_logs = max_old_logs
         self.max_old_runs = max_old_runs
         self.ray_instance = ray_instance
-        self.chunk_size = chunk_size
+        if isinstance(chunk_size, str):
+            self.chunk_size = self._parse_chunk_size(chunk_size)
+        else:
+            self.chunk_size = chunk_size
         self.initial_delay = initial_delay
         self.max_delay = max_delay
         self.max_retries = max_retries
@@ -315,7 +326,6 @@ class ScraperLib:
         self._ray_initialized_internally = False
         self._init_ray_if_needed()
 
-        # --- Logger and State Handler ---
         self.logger = self._setup_logger() if not self.disable_logging else None
         self.state_handler = DownloadState(state_file=self.state_file, incremental=self.incremental)
 
@@ -325,14 +335,14 @@ class ScraperLib:
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
 
-    def _init_ray_if_needed(self):
-        """
-        Initializes Ray if not already initialized and no external instance is provided.
-        """
+        # Keep the original list of all file links for random selection
+        self.all_file_links: Optional[List[str]] = None
+
+    def _init_ray_if_needed(self) -> None:
         if self.ray_instance is None:
             if not ray.is_initialized():
                 try:
-                    runtime_env = {"pip": ["ScraperLib"]}
+                    runtime_env = {"working_dir": "."}
                     ray.init(
                         include_dashboard=False,
                         logging_level=logging.ERROR,
@@ -348,20 +358,7 @@ class ScraperLib:
             else:
                 self.ray_instance = ray
 
-        # --- Logger and State Handler ---
-        self.logger = self._setup_logger() if not self.disable_logging else None
-        self.state_handler = DownloadState(state_file=self.state_file, incremental=self.incremental)
-
-        self.session = requests.Session()
-        self.files_to_download: List[Dict[str, Any]] = []
-        self.results: List[Dict[str, Any]] = []
-        self.start_time: Optional[float] = None
-        self.end_time: Optional[float] = None
-
-    def _setup_logger(self):
-        """
-        Sets up and returns a CustomLogger instance.
-        """
+    def _setup_logger(self) -> CustomLogger:
         return CustomLogger(
             banner=f"ScraperLib - {self.dataset_name}",
             log_file_path=self.log_file,
@@ -696,13 +693,12 @@ class ScraperLib:
     def _parallel_download_with_ray(
         self,
         file_urls: List[str],
-        headers: Dict[str, Any],
-        user_agents: List[str],
-        max_concurrent: int = 8,
-        download_dir: str = "data",
+        headers: Optional[Dict[str, Any]] = None,
+        user_agents: Optional[List[str]] = None,
+        download_dir: Optional[str] = None,
         state_handler: Optional[DownloadState] = None,
         logger: Optional[CustomLogger] = None,
-        disable_progress_bar: bool = False
+        disable_progress_bar: Optional[bool] = None
     ) -> List[Dict[str, Any]]:
         """
         Performs parallel download of files using Ray.
@@ -720,6 +716,13 @@ class ScraperLib:
         Returns:
             list: List of download results.
         """
+        headers = headers or self.headers
+        user_agents = user_agents or self.user_agents
+        download_dir = download_dir or self.download_dir
+        state_handler = state_handler or self.state_handler
+        logger = logger or self.logger
+        disable_progress_bar = self.disable_progress_bar if disable_progress_bar is None else disable_progress_bar
+
         chunk_size = self.chunk_size
         initial_delay = self.initial_delay
         max_delay = self.max_delay
@@ -759,7 +762,7 @@ class ScraperLib:
 
         with progress_bar as pbar:
             tqdm._instances.clear()
-            for _ in range(max_concurrent):
+            for _ in range(self.max_concurrent):
                 url = ray.get(queue.get_next.remote())
                 if url:
                     active_tasks.append(
@@ -1001,15 +1004,8 @@ class ScraperLib:
 
         ray_created = False
         if self.ray_instance is None:
-            ray_cpu = min(self.max_concurrent, os.cpu_count())
-            ray.shutdown()
-            ray.init(
-                num_cpus=ray_cpu,
-                include_dashboard=False,
-                logging_level=logging.ERROR,
-                ignore_reinit_error=True,
-            )
-            ray_created = True
+            self._init_ray_if_needed()
+            ray_created = self._ray_initialized_internally
 
         if logger:
             logger.info(f"Ray version: {ray.__version__}")
@@ -1023,37 +1019,62 @@ class ScraperLib:
         else:
             if logger:
                 logger.info(f"[DIR] Directory exists: {self.download_dir}")
+
         if logger:
             logger.section("PHASE 1: Collecting file links")
-        html_content = self._get_page_content(self.base_url, self.user_agents, self.headers, logger=logger)
-        if not html_content:
-            if logger:
-                logger.error("Failed to access main page. Check connection and URL.")
-            if ray_created:
-                ray.shutdown()
-            return
-        file_links = self._extract_file_links(html_content, self.base_url, self.file_patterns)
-        if self.max_files:
-            file_links = file_links[:self.max_files]
+
+        # Only extract all file links once and cache them
+        if self.all_file_links is None:
+            html_content = self._get_page_content(self.base_url, self.user_agents, self.headers, logger=logger)
+            if not html_content:
+                if logger:
+                    logger.error("Failed to access main page. Check connection and URL.")
+                if ray_created:
+                    ray.shutdown()
+                return
+            self.all_file_links = self._extract_file_links(html_content, self.base_url, self.file_patterns)
+
+        # Filter out already completed files (must exist in data dir)
+        completed_ids = set(
+            url for url in self.all_file_links
+            if self.state_handler.is_completed(url, self.download_dir)
+        )
+        remaining_links = [
+            url for url in self.all_file_links
+            if url not in completed_ids
+        ]
+
+        # Randomly select up to max_files files from remaining
+        if self.max_files and len(remaining_links) > self.max_files:
+            file_links = random.sample(remaining_links, self.max_files)
+        else:
+            file_links = remaining_links
+
         if not file_links:
             if logger:
-                logger.error("No valid links found. Check extraction pattern.")
+                logger.error("No valid links found. Check extraction pattern or all files completed.")
             if ray_created:
                 ray.shutdown()
             return
+
         if logger:
             logger.success(f"Found {len(file_links)} files to download")
         if logger:
             logger.section("PHASE 2: Parallel downloads with Ray")
+
         max_concurrent = self.max_concurrent
         if max_concurrent is None:
             max_concurrent = min(16, int(ray.available_resources()['CPU'] * 1.5))
         if logger:
             logger.info(f"Using {max_concurrent} parallel workers")
 
-        state_handler = DownloadState(state_file=self.state_file, incremental=self.incremental)
+        state_handler = self.state_handler
         results = self._parallel_download_with_ray(
-            file_links, self.headers, self.user_agents, max_concurrent, self.download_dir, state_handler,
+            file_links,
+            headers=self.headers,
+            user_agents=self.user_agents,
+            download_dir=self.download_dir,
+            state_handler=state_handler,
             logger=logger,
             disable_progress_bar=self.disable_progress_bar
         )
@@ -1167,42 +1188,38 @@ Arguments:
 
         chunk_size = ScraperLib._parse_chunk_size(args.chunk_size)
 
-        ray.shutdown()
-        ray.init(
-            num_cpus=min(args.max_concurrent, os.cpu_count()),
-            include_dashboard=False,
-            logging_level=logging.ERROR,
-            ignore_reinit_error=True,
+        scraper = ScraperLib(
+            base_url=args.url,
+            file_patterns=args.patterns,
+            download_dir=args.dir,
+            incremental=args.incremental,
+            max_files=args.max_files,
+            max_concurrent=args.max_concurrent,
+            headers=headers,
+            user_agents=user_agents,
+            state_file=args.state_file,
+            log_file=args.log_file,
+            report_prefix=args.report_prefix,
+            disable_logging=args.disable_logging,
+            disable_terminal_logging=args.disable_terminal_logging,
+            dataset_name=args.dataset_name,
+            disable_progress_bar=args.disable_progress_bar,
+            output_dir=args.output_dir,
+            max_old_logs=args.max_old_logs,
+            max_old_runs=args.max_old_runs,
+            chunk_size=chunk_size,
+            initial_delay=args.initial_delay,
+            max_delay=args.max_delay,
+            max_retries=args.max_retries
         )
+        scraper._init_ray_if_needed()
         try:
-            scraper = ScraperLib(
-                base_url=args.url,
-                file_patterns=args.patterns,
-                download_dir=args.dir,
-                incremental=args.incremental,
-                max_files=args.max_files,
-                max_concurrent=args.max_concurrent,
-                headers=headers,
-                user_agents=user_agents,
-                state_file=args.state_file,
-                log_file=args.log_file,
-                report_prefix=args.report_prefix,
-                disable_logging=args.disable_logging,
-                disable_terminal_logging=args.disable_terminal_logging,
-                dataset_name=args.dataset_name,
-                disable_progress_bar=args.disable_progress_bar,
-                output_dir=args.output_dir,
-                max_old_logs=args.max_old_logs,
-                max_old_runs=args.max_old_runs,
-                chunk_size=chunk_size,
-                initial_delay=args.initial_delay,
-                max_delay=args.max_delay,
-                max_retries=args.max_retries
-            )
             scraper.run()
         finally:
-            ray.shutdown()
+            if scraper._ray_initialized_internally and ray.is_initialized():
+                ray.shutdown()
 
+    @staticmethod
     def _parse_chunk_size(size_str: str) -> int:
         """
         Parse a human-readable chunk size string (e.g., '1gb', '10mb', '8 bytes') into an integer number of bytes.
