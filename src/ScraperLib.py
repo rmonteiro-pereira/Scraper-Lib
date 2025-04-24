@@ -4,7 +4,7 @@ import requests
 import time
 import logging
 from bs4 import BeautifulSoup
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Callable
 os.environ['RAY_DEDUP_LOGS'] = "0"
 os.environ["RAY_SILENT_MODE"] = "1"
 from tqdm import tqdm
@@ -19,11 +19,249 @@ import numpy as np
 from datetime import datetime
 import gc
 import shutil
-from src.CustomLogger import CustomLogger
-from src.DownloadState import DownloadState
+from CustomLogger import CustomLogger
+import portalocker
+import hashlib
+from pathlib import Path
 
-# Assume que src está um nível abaixo do root do projeto
 PROJECT_ROOT_FROM_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+class DownloadState:
+    """
+    Manages the persistent state of downloads, including completed, failed, and delay statistics.
+
+    This class provides atomic file operations for safe concurrent access, tracks download progress,
+    and maintains statistics for reporting and incremental downloads.
+
+    Args:
+        state_file (str): Path to the state file (JSON).
+        incremental (bool): If True, loads existing state; otherwise, starts fresh.
+    """
+
+    def __init__(self, state_file: str = "download_state.json", incremental: bool = True) -> None:
+        """
+        Initialize the DownloadState.
+
+        Args:
+            state_file (str): Path to the state file (JSON).
+            incremental (bool): If True, loads existing state; otherwise, starts fresh.
+        """
+        self.state_file: str = state_file
+        self._cache: Dict[str, Any] = {}  # Local cache to reduce disk access
+        # Garante que o diretório existe
+        state_dir = os.path.dirname(os.path.abspath(self.state_file))
+        if state_dir and not os.path.exists(state_dir):
+            os.makedirs(state_dir, exist_ok=True)
+        if incremental:
+            self.load_state()
+        else:
+            self.generate()
+
+    def generate(self) -> Dict[str, Any]:
+        """
+        Initialize a fresh state structure and salva no disco.
+
+        Returns:
+            dict: The initialized state dictionary.
+        """
+        self._cache = {
+            'completed': {},
+            'failed': {},
+            'delays_success': [],
+            'delays_failed': [],
+            'stats': {
+                'start_time': datetime.now().isoformat(),
+                'last_update': None,
+                'total_bytes': 0,
+                'delay_stats_success': {
+                    'min': None,
+                    'max': None,
+                    'avg': None,
+                    'median': None,
+                    'percentiles': {}
+                },
+                'delay_stats_failed': {
+                    'min': None,
+                    'max': None,
+                    'avg': None,
+                    'median': None,
+                    'percentiles': {}
+                }
+            }
+        }
+        # Salva imediatamente o estado inicial
+        with open(self.state_file, 'w', encoding='utf-8') as f:
+            json.dump(self._cache, f, indent=2)
+        return self._cache
+
+    def _atomic_file_operation(self, operation: Callable[[], None]) -> None:
+        """
+        Execute file operations with locking for safe concurrent access.
+
+        Args:
+            operation (callable): Function to execute atomically.
+        """
+        if not os.path.exists(self.state_file):
+            self.generate()
+
+        with open(self.state_file, 'a+') as f:
+            try:
+                portalocker.lock(f, portalocker.LOCK_EX)
+                f.seek(0)
+                try:
+                    content = f.read()
+                    self._cache = json.loads(content) if content.strip() else self.generate()
+                except json.JSONDecodeError:
+                    self._cache = self.generate()
+
+                operation()
+
+                f.seek(0)
+                f.truncate()
+                json.dump(self._cache, f, indent=2)
+            finally:
+                portalocker.unlock(f)
+
+    def add_delay(self, delay: float, success: bool = True) -> None:
+        """
+        Record a new delay and update statistics.
+
+        Args:
+            delay (float): Delay value in seconds.
+            success (bool): True if the delay was for a successful download.
+        """
+        def _add() -> None:
+            delay_record = {
+                'value': delay,
+                'timestamp': datetime.now().isoformat()
+            }
+            key = 'delays_success' if success else 'delays_failed'
+            self._cache[key].append(delay_record)
+            stats_key = f'delay_stats_{"success" if success else "failed"}'
+            delays = [d['value'] for d in self._cache[key]]
+            if delays:
+                self._cache['stats'][stats_key] = {
+                    'min': min(delays),
+                    'max': max(delays),
+                    'avg': sum(delays) / len(delays),
+                    'median': sorted(delays)[len(delays)//2],
+                    'percentiles': {
+                        '90th': np.percentile(delays, 90) if len(delays) > 1 else delays[0],
+                        '95th': np.percentile(delays, 95) if len(delays) > 1 else delays[0]
+                    }
+                }
+            self._cache['stats']['last_update'] = datetime.now().isoformat()
+        self._atomic_file_operation(_add)
+
+    def load_state(self) -> None:
+        """
+        Load state from file.
+        """
+        if os.path.exists(self.state_file):
+            with open(self.state_file, 'r') as f:
+                try:
+                    self._cache = json.load(f)
+                except json.JSONDecodeError:
+                    self.generate()
+        else:
+            self.generate()
+
+    def save_state(self) -> None:
+        """
+        Save the current state to file.
+        """
+        def _save() -> None:
+            self._cache['stats']['last_update'] = datetime.now().isoformat()
+        self._atomic_file_operation(_save)
+
+    def get_file_id(self, url: str) -> str:
+        """
+        Generate a unique file ID for a given URL.
+
+        Args:
+            url (str): File URL.
+
+        Returns:
+            str: MD5 hash of the URL.
+        """
+        return hashlib.md5(url.encode()).hexdigest()
+
+    def is_completed(self, url: str, data_dir: Optional[str] = None) -> bool:
+        """
+        Check if a file has already been downloaded and exists on disk.
+
+        Args:
+            url (str): File URL.
+            data_dir (str, optional): Directory where files are stored.
+
+        Returns:
+            bool: True if completed and file exists, False otherwise.
+        """
+        file_id = self.get_file_id(url)
+        completed = file_id in self._cache['completed']
+        if completed and data_dir:
+            file_info = self._cache['completed'][file_id]
+            file_path = file_info.get('filepath')
+            if not file_path:
+                return False
+            # If file_path is not absolute, join with data_dir
+            if not os.path.isabs(file_path):
+                file_path = os.path.join(data_dir, file_path)
+            return os.path.exists(file_path)
+        return completed
+
+    def add_completed(self, url: str, filepath: str, size: int) -> None:
+        """
+        Mark a file as successfully downloaded.
+
+        Args:
+            url (str): File URL.
+            filepath (str): Local file path.
+            size (int): File size in bytes.
+        """
+        def _add() -> None:
+            file_id = self.get_file_id(url)
+            self._cache['completed'][file_id] = {
+                'url': url,
+                'filepath': filepath,
+                'size': size,
+                'timestamp': datetime.now().isoformat()
+            }
+            self._cache['stats']['total_bytes'] += size
+            self._cache['stats']['last_update'] = datetime.now().isoformat()
+            if file_id in self._cache['failed']:
+                del self._cache['failed'][file_id]
+        self._atomic_file_operation(_add)
+
+    def add_failed(self, url: str, error: Any) -> None:
+        """
+        Mark a file as failed to download.
+
+        Args:
+            url (str): File URL.
+            error (str): Error message.
+        """
+        def _add() -> None:
+            file_id = self.get_file_id(url)
+            current_retries = self._cache['failed'].get(file_id, {}).get('retries', 0)
+            self._cache['failed'][file_id] = {
+                'url': url,
+                'error': str(error),
+                'timestamp': datetime.now().isoformat(),
+                'retries': current_retries + 1
+            }
+            self._cache['stats']['last_update'] = datetime.now().isoformat()
+        self._atomic_file_operation(_add)
+
+    @property
+    def state(self) -> Dict[str, Any]:
+        """
+        Get the current state dictionary.
+
+        Returns:
+            dict: The current state.
+        """
+        return self._cache
 
 class ScraperLib:
     """
@@ -34,43 +272,41 @@ class ScraperLib:
         self,
         base_url: str,
         file_patterns: List[str],
-        download_dir: str = "tlc_data", # Default relative path
-        state_file: str = "state/download_state.json", # Default relative path
-        log_file: str = "logs/process_log.log", # Default relative path
-        output_dir: str = "output", # Default relative path
-        incremental: bool = False,
+        download_dir: str = "downloads",
+        state_file: str = "state/download_state.json",
+        log_file: str = "logs/scraper_log.log",
+        output_dir: str = "output",
+        incremental: bool = True,
         max_files: Optional[int] = None,
         max_concurrent: Optional[int] = None,
-        headers: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
         user_agents: Optional[List[str]] = None,
         report_prefix: str = "download_report",
         disable_logging: bool = False,
         disable_terminal_logging: bool = False,
         dataset_name: Optional[str] = None,
         disable_progress_bar: bool = False,
-        max_old_logs: int = 25,
-        max_old_runs: int = 25,
+        max_old_logs: int = 10,
+        max_old_runs: int = 10,
         ray_instance: Optional[Any] = None,
-        chunk_size: Union[int, str] = 5 * 1024 * 1024,
+        chunk_size: Union[str, int] = "5MB",
         initial_delay: float = 1.0,
         max_delay: float = 60.0,
         max_retries: int = 5,
-        project_root: Optional[str] = None # Allow overriding project root
     ) -> None:
-        """
-        Initializes the ScraperLib instance. Paths are relative to project root unless absolute.
+        # Use pathlib for robust absolute path handling
+        self.download_dir = str(Path(download_dir).expanduser().resolve())
+        self.state_file = str(Path(state_file).expanduser().resolve())
+        self.log_file = str(Path(log_file).expanduser().resolve())
+        self.output_dir = str(Path(output_dir).expanduser().resolve())
 
-        Args:
-            # ... (other args) ...
-            project_root (Optional[str]): Explicit project root path. If None, inferred from this file's location.
-        """
         self.base_url = base_url
         self.file_patterns = file_patterns
         self.incremental = incremental
         self.max_files = max_files
-        self.max_concurrent = max_concurrent or os.cpu_count() or 16
-        self.headers = headers # Will be processed in run()
-        self.user_agents = user_agents # Will be processed in run()
+        self.max_concurrent = max_concurrent or min(os.cpu_count() or 16)
+        self.headers = headers
+        self.user_agents = user_agents
         self.report_prefix = report_prefix
         self.disable_logging = disable_logging
         self.disable_terminal_logging = disable_terminal_logging
@@ -78,42 +314,56 @@ class ScraperLib:
         self.disable_progress_bar = disable_progress_bar
         self.max_old_logs = max_old_logs
         self.max_old_runs = max_old_runs
-        self.ray_instance = ray_instance # Will be processed in run()
-        self.chunk_size = self._parse_chunk_size(chunk_size) if isinstance(chunk_size, str) else chunk_size
+        self.ray_instance = ray_instance
+        if isinstance(chunk_size, str):
+            self.chunk_size = self._parse_chunk_size(chunk_size)
+        else:
+            self.chunk_size = chunk_size
         self.initial_delay = initial_delay
         self.max_delay = max_delay
         self.max_retries = max_retries
 
-        # --- Process and create paths ---
-        self.project_root = os.path.abspath(project_root or PROJECT_ROOT_FROM_SRC)
+        self._ray_initialized_internally = False
+        self._init_ray_if_needed()
 
-        # Convert to absolute paths based on project_root
-        self.download_dir = os.path.join(self.project_root, download_dir) if not os.path.isabs(download_dir) else download_dir
-        self.state_file = os.path.join(self.project_root, state_file) if not os.path.isabs(state_file) else state_file
-        self.log_file = os.path.join(self.project_root, log_file) if not os.path.isabs(log_file) else log_file
-        self.output_dir = os.path.join(self.project_root, output_dir) if not os.path.isabs(output_dir) else output_dir
-        self.report_dir = os.path.join(self.output_dir, "reports") # Define report dir based on output_dir
+        self.logger = self._setup_logger() if not self.disable_logging else None
+        self.state_handler = DownloadState(state_file=self.state_file, incremental=self.incremental)
 
-        # Ensure directories exist
-        os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
-        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
-        os.makedirs(self.download_dir, exist_ok=True)
-        os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(self.report_dir, exist_ok=True) # Also create report directory
-        # --- End path processing ---
-
-        # Logger and state handler are now initialized in run() or lazily,
-        # as they depend on the log file path which is now absolute.
-        # We store the paths here, but initialization happens later.
-        self.logger: Optional[logging.Logger] = None # Initialize later
-        self.state_handler: Optional[DownloadState] = None # Initialize later
-
-        self.session = requests.Session() # Session can be initialized here
-        # Headers will be updated in run()
+        self.session = requests.Session()
         self.files_to_download: List[Dict[str, Any]] = []
         self.results: List[Dict[str, Any]] = []
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
+
+        # Keep the original list of all file links for random selection
+        self.all_file_links: Optional[List[str]] = None
+
+    def _init_ray_if_needed(self) -> None:
+        if self.ray_instance is None:
+            if not ray.is_initialized():
+                try:
+                    runtime_env = {"working_dir": "."}
+                    ray.init(
+                        include_dashboard=False,
+                        logging_level=logging.ERROR,
+                        ignore_reinit_error=True,
+                        runtime_env=runtime_env
+                    )
+                    self.ray_instance = ray
+                    self._ray_initialized_internally = True
+                    print("Ray initialized with runtime_env: pip install ScraperLib")
+                except Exception as e:
+                    print(f"Failed to initialize Ray: {e}")
+                    self.ray_instance = None
+            else:
+                self.ray_instance = ray
+
+    def _setup_logger(self) -> CustomLogger:
+        return CustomLogger(
+            banner=f"ScraperLib - {self.dataset_name}",
+            log_file_path=self.log_file,
+            max_old_logs=self.max_old_logs
+        )
 
     def _safe_copy2(
         self,
@@ -443,13 +693,12 @@ class ScraperLib:
     def _parallel_download_with_ray(
         self,
         file_urls: List[str],
-        headers: Dict[str, Any],
-        user_agents: List[str],
-        max_concurrent: int = 8,
-        download_dir: str = "data",
+        headers: Optional[Dict[str, Any]] = None,
+        user_agents: Optional[List[str]] = None,
+        download_dir: Optional[str] = None,
         state_handler: Optional[DownloadState] = None,
         logger: Optional[CustomLogger] = None,
-        disable_progress_bar: bool = False
+        disable_progress_bar: Optional[bool] = None
     ) -> List[Dict[str, Any]]:
         """
         Performs parallel download of files using Ray.
@@ -467,6 +716,13 @@ class ScraperLib:
         Returns:
             list: List of download results.
         """
+        headers = headers or self.headers
+        user_agents = user_agents or self.user_agents
+        download_dir = download_dir or self.download_dir
+        state_handler = state_handler or self.state_handler
+        logger = logger or self.logger
+        disable_progress_bar = self.disable_progress_bar if disable_progress_bar is None else disable_progress_bar
+
         chunk_size = self.chunk_size
         initial_delay = self.initial_delay
         max_delay = self.max_delay
@@ -506,7 +762,7 @@ class ScraperLib:
 
         with progress_bar as pbar:
             tqdm._instances.clear()
-            for _ in range(max_concurrent):
+            for _ in range(self.max_concurrent):
                 url = ray.get(queue.get_next.remote())
                 if url:
                     active_tasks.append(
@@ -748,15 +1004,8 @@ class ScraperLib:
 
         ray_created = False
         if self.ray_instance is None:
-            ray_cpu = min(self.max_concurrent, os.cpu_count())
-            ray.shutdown()
-            ray.init(
-                num_cpus=ray_cpu,
-                include_dashboard=False,
-                logging_level=logging.ERROR,
-                ignore_reinit_error=True,
-            )
-            ray_created = True
+            self._init_ray_if_needed()
+            ray_created = self._ray_initialized_internally
 
         if logger:
             logger.info(f"Ray version: {ray.__version__}")
@@ -770,37 +1019,62 @@ class ScraperLib:
         else:
             if logger:
                 logger.info(f"[DIR] Directory exists: {self.download_dir}")
+
         if logger:
             logger.section("PHASE 1: Collecting file links")
-        html_content = self._get_page_content(self.base_url, self.user_agents, self.headers, logger=logger)
-        if not html_content:
-            if logger:
-                logger.error("Failed to access main page. Check connection and URL.")
-            if ray_created:
-                ray.shutdown()
-            return
-        file_links = self._extract_file_links(html_content, self.base_url, self.file_patterns)
-        if self.max_files:
-            file_links = file_links[:self.max_files]
+
+        # Only extract all file links once and cache them
+        if self.all_file_links is None:
+            html_content = self._get_page_content(self.base_url, self.user_agents, self.headers, logger=logger)
+            if not html_content:
+                if logger:
+                    logger.error("Failed to access main page. Check connection and URL.")
+                if ray_created:
+                    ray.shutdown()
+                return
+            self.all_file_links = self._extract_file_links(html_content, self.base_url, self.file_patterns)
+
+        # Filter out already completed files (must exist in data dir)
+        completed_ids = set(
+            url for url in self.all_file_links
+            if self.state_handler.is_completed(url, self.download_dir)
+        )
+        remaining_links = [
+            url for url in self.all_file_links
+            if url not in completed_ids
+        ]
+
+        # Randomly select up to max_files files from remaining
+        if self.max_files and len(remaining_links) > self.max_files:
+            file_links = random.sample(remaining_links, self.max_files)
+        else:
+            file_links = remaining_links
+
         if not file_links:
             if logger:
-                logger.error("No valid links found. Check extraction pattern.")
+                logger.error("No valid links found. Check extraction pattern or all files completed.")
             if ray_created:
                 ray.shutdown()
             return
+
         if logger:
             logger.success(f"Found {len(file_links)} files to download")
         if logger:
             logger.section("PHASE 2: Parallel downloads with Ray")
+
         max_concurrent = self.max_concurrent
         if max_concurrent is None:
             max_concurrent = min(16, int(ray.available_resources()['CPU'] * 1.5))
         if logger:
             logger.info(f"Using {max_concurrent} parallel workers")
 
-        state_handler = DownloadState(state_file=self.state_file, incremental=self.incremental)
+        state_handler = self.state_handler
         results = self._parallel_download_with_ray(
-            file_links, self.headers, self.user_agents, max_concurrent, self.download_dir, state_handler,
+            file_links,
+            headers=self.headers,
+            user_agents=self.user_agents,
+            download_dir=self.download_dir,
+            state_handler=state_handler,
             logger=logger,
             disable_progress_bar=self.disable_progress_bar
         )
@@ -914,42 +1188,38 @@ Arguments:
 
         chunk_size = ScraperLib._parse_chunk_size(args.chunk_size)
 
-        ray.shutdown()
-        ray.init(
-            num_cpus=min(args.max_concurrent, os.cpu_count()),
-            include_dashboard=False,
-            logging_level=logging.ERROR,
-            ignore_reinit_error=True,
+        scraper = ScraperLib(
+            base_url=args.url,
+            file_patterns=args.patterns,
+            download_dir=args.dir,
+            incremental=args.incremental,
+            max_files=args.max_files,
+            max_concurrent=args.max_concurrent,
+            headers=headers,
+            user_agents=user_agents,
+            state_file=args.state_file,
+            log_file=args.log_file,
+            report_prefix=args.report_prefix,
+            disable_logging=args.disable_logging,
+            disable_terminal_logging=args.disable_terminal_logging,
+            dataset_name=args.dataset_name,
+            disable_progress_bar=args.disable_progress_bar,
+            output_dir=args.output_dir,
+            max_old_logs=args.max_old_logs,
+            max_old_runs=args.max_old_runs,
+            chunk_size=chunk_size,
+            initial_delay=args.initial_delay,
+            max_delay=args.max_delay,
+            max_retries=args.max_retries
         )
+        scraper._init_ray_if_needed()
         try:
-            scraper = ScraperLib(
-                base_url=args.url,
-                file_patterns=args.patterns,
-                download_dir=args.dir,
-                incremental=args.incremental,
-                max_files=args.max_files,
-                max_concurrent=args.max_concurrent,
-                headers=headers,
-                user_agents=user_agents,
-                state_file=args.state_file,
-                log_file=args.log_file,
-                report_prefix=args.report_prefix,
-                disable_logging=args.disable_logging,
-                disable_terminal_logging=args.disable_terminal_logging,
-                dataset_name=args.dataset_name,
-                disable_progress_bar=args.disable_progress_bar,
-                output_dir=args.output_dir,
-                max_old_logs=args.max_old_logs,
-                max_old_runs=args.max_old_runs,
-                chunk_size=chunk_size,
-                initial_delay=args.initial_delay,
-                max_delay=args.max_delay,
-                max_retries=args.max_retries
-            )
             scraper.run()
         finally:
-            ray.shutdown()
+            if scraper._ray_initialized_internally and ray.is_initialized():
+                ray.shutdown()
 
+    @staticmethod
     def _parse_chunk_size(size_str: str) -> int:
         """
         Parse a human-readable chunk size string (e.g., '1gb', '10mb', '8 bytes') into an integer number of bytes.
@@ -983,3 +1253,4 @@ Arguments:
             return int(size_str)
         except Exception:
             raise ValueError(f"Invalid chunk size: {size_str}")
+
