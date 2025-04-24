@@ -100,7 +100,7 @@ def test_generate_report(tmp_path, scraper):
 
 def test_parallel_download_with_ray_empty(scraper):
     # Should handle empty file list gracefully
-    results = scraper._parallel_download_with_ray([], {}, [], 1, "data", None, None, True)
+    results = scraper._parallel_download_with_ray([])
     assert results == []
 
 def test_init_sets_attributes(scraper):
