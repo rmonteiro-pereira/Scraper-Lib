@@ -1,7 +1,5 @@
-import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
-from DownloadState import DownloadState
+from ScraperLib import DownloadState
 
 def test_init_and_generate(tmp_path):
     state_file = tmp_path / "state.json"
