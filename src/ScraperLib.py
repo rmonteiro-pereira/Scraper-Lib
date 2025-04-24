@@ -23,7 +23,7 @@ from CustomLogger import CustomLogger
 import os
 import portalocker
 import hashlib
-from pathlib import Path # Use pathlib for path operations
+from pathlib import Path
 
 # Assume que src está um nível abaixo do root do projeto
 PROJECT_ROOT_FROM_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -261,10 +261,10 @@ class ScraperLib:
         self,
         base_url: str,
         file_patterns: List[str],
-        download_dir: str = "downloads", # Default relative to CWD
-        state_file: str = "state/download_state.json", # Default relative to CWD
-        log_file: str = "logs/scraper_log.log", # Default relative to CWD
-        output_dir: str = "output", # Default relative to CWD
+        download_dir: str = "downloads",
+        state_file: str = "state/download_state.json",
+        log_file: str = "logs/scraper_log.log",
+        output_dir: str = "output",
         incremental: bool = True,
         max_files: Optional[int] = None,
         max_concurrent: Optional[int] = None,
@@ -277,25 +277,28 @@ class ScraperLib:
         disable_progress_bar: bool = False,
         max_old_logs: int = 10,
         max_old_runs: int = 10,
-        ray_instance: Optional[Any] = None, # Accept external Ray instance
+        ray_instance: Optional[Any] = None,
         chunk_size: Union[str, int] = "5MB",
         initial_delay: float = 1.0,
         max_delay: float = 60.0,
         max_retries: int = 5,
     ) -> None:
         """
-        Initializes the ScraperLib instance. Paths are relative to project root unless absolute.
-
-        Args:
-            # ... (other args) ...
+        Initializes the ScraperLib instance. All paths are made absolute using pathlib.
         """
+        # Use pathlib for robust absolute path handling
+        self.download_dir = str(Path(download_dir).expanduser().resolve())
+        self.state_file = str(Path(state_file).expanduser().resolve())
+        self.log_file = str(Path(log_file).expanduser().resolve())
+        self.output_dir = str(Path(output_dir).expanduser().resolve())
+
         self.base_url = base_url
         self.file_patterns = file_patterns
         self.incremental = incremental
         self.max_files = max_files
-        self.max_concurrent = max_concurrent or os.cpu_count() or 16
-        self.headers = headers # Will be processed in run()
-        self.user_agents = user_agents # Will be processed in run()
+        self.max_concurrent = max_concurrent or min(os.cpu_count() or 16)
+        self.headers = headers
+        self.user_agents = user_agents
         self.report_prefix = report_prefix
         self.disable_logging = disable_logging
         self.disable_terminal_logging = disable_terminal_logging
@@ -303,70 +306,51 @@ class ScraperLib:
         self.disable_progress_bar = disable_progress_bar
         self.max_old_logs = max_old_logs
         self.max_old_runs = max_old_runs
-        self.ray_instance = ray_instance # Will be processed in run()
-        self.chunk_size = self._parse_chunk_size(chunk_size) if isinstance(chunk_size, str) else chunk_size
+        self.ray_instance = ray_instance
+        self.chunk_size = chunk_size
         self.initial_delay = initial_delay
         self.max_delay = max_delay
         self.max_retries = max_retries
 
-        # --- Path Resolution ---
-        # Use the current working directory as the base for resolving relative paths.
-        base_path = Path.cwd()
-        self.download_dir = str((base_path / download_dir).resolve())
-        self.state_file = str((base_path / state_file).resolve())
-        self.log_file = str((base_path / log_file).resolve())
-        self.output_dir = str((base_path / output_dir).resolve())
-        self.report_dir = str(Path(self.output_dir) / "reports") # Define report dir
-
-        # --- Ensure Directories Exist ---
-        Path(self.state_file).parent.mkdir(parents=True, exist_ok=True)
-        Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
-        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
-        Path(self.report_dir).mkdir(parents=True, exist_ok=True)
-        # download_dir is created later by _download_file_ray if needed
-
-        # --- Ray Setup ---
         self._ray_initialized_internally = False
         if self.ray_instance is None:
             if not ray.is_initialized():
-                print("Info: Initializing internal Ray instance...")
-                # Define runtime_env for internally managed Ray
-                # This assumes the package is installable via 'pip install .'
-                # from the directory where the user runs their script (if it's the project root)
-                # OR that the package is installed in the environment.
-                runtime_env = {"pip": ["."]} # Assumes run from project root OR package installed
-                # If installed from PyPI: runtime_env = {"pip": ["scraper-lib-rmp"]}
-
                 try:
+                    runtime_env = {"pip": ["ScraperLib"]}
                     ray.init(
-                        num_cpus=self.max_concurrent, # Use max_concurrent as hint
                         include_dashboard=False,
-                        logging_level=logging.ERROR, # Keep Ray's own logging minimal
+                        logging_level=logging.ERROR,
                         ignore_reinit_error=True,
                         runtime_env=runtime_env
                     )
-                    self.ray_instance = ray # Use the newly initialized instance
+                    self.ray_instance = ray
                     self._ray_initialized_internally = True
-                    print(f"Info: Internal Ray initialized with runtime_env: {runtime_env}")
+                    print("Ray initialized with runtime_env: pip install ScraperLib")
                 except Exception as e:
-                    print(f"Error: Failed to initialize internal Ray instance: {e}. Parallelism disabled.")
-                    self.ray_instance = None # Ensure Ray is disabled if init fails
+                    print(f"Failed to initialize Ray: {e}")
+                    self.ray_instance = None
             else:
-                 print("Info: Using existing external Ray instance.")
-                 self.ray_instance = ray # Assign the existing global instance
+                self.ray_instance = ray
 
         # --- Logger and State Handler ---
-        # Initialize logger (now that paths are absolute and dirs exist)
         self.logger = self._setup_logger() if not self.disable_logging else None
-        # Initialize state handler
         self.state_handler = DownloadState(state_file=self.state_file, incremental=self.incremental)
 
-        self.session = requests.Session() # Session can be initialized here
-        # Headers will be updated in run()
+        self.session = requests.Session()
         self.files_to_download: List[Dict[str, Any]] = []
         self.results: List[Dict[str, Any]] = []
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
+
+    def _setup_logger(self):
+        """
+        Sets up and returns a CustomLogger instance.
+        """
+        return CustomLogger(
+            banner=f"ScraperLib - {self.dataset_name}",
+            log_file_path=self.log_file,
+            max_old_logs=self.max_old_logs
+        )
 
     def _safe_copy2(
         self,
