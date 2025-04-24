@@ -2,7 +2,7 @@ Usage
 =====
 
 Command Line Interface
----------------------
+----------------------
 
 .. code-block:: bash
 
