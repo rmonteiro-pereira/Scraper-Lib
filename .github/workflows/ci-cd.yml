@@ -49,7 +49,7 @@ jobs:
   build-docs:
     runs-on: ubuntu-latest
     needs: test-lint-type-build # Run only if tests pass
-    if: github.ref == 'refs/heads/main' # Build docs only on main branch merge
+    if: github.ref == 'refs/heads/master' # Build docs only on master branch merge
 
     steps:
         - name: Checkout
@@ -69,7 +69,7 @@ jobs:
   deploy-docs:
     runs-on: ubuntu-latest
     needs: build-docs # Run only if tests pass
-    if: github.ref == 'refs/heads/main' # Build docs only on main branch merge
+    if: github.ref == 'refs/heads/master' # Build docs only on master branch merge
     steps:    
         - name: Setup Pages
           uses: actions/configure-pages@v5
