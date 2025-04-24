@@ -1,6 +1,6 @@
 [project]
 name = "Scraper-Lib"
-version = "0.1.0"
+version = "0.2.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,3 +34,7 @@ docs = [
     "sphinx-copybutton>=0.5.2",
     "sphinx-design>=0.6.1",
 ]
+[tool.semantic_release]
+version_variable = "src/your_package/__init__.py:__version__"
+branch = "main"
+upload_to_pypi = false  # Let your publish workflow handle PyPI upload
