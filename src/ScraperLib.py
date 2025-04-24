@@ -4,7 +4,7 @@ import requests
 import time
 import logging
 from bs4 import BeautifulSoup
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Callable
 os.environ['RAY_DEDUP_LOGS'] = "0"
 os.environ["RAY_SILENT_MODE"] = "1"
 from tqdm import tqdm
@@ -19,11 +19,238 @@ import numpy as np
 from datetime import datetime
 import gc
 import shutil
-from src.CustomLogger import CustomLogger
-from src.DownloadState import DownloadState
+from CustomLogger import CustomLogger
+import os
+import portalocker
+import hashlib
+from pathlib import Path # Use pathlib for path operations
 
 # Assume que src está um nível abaixo do root do projeto
 PROJECT_ROOT_FROM_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+class DownloadState:
+    """
+    Manages the persistent state of downloads, including completed, failed, and delay statistics.
+
+    This class provides atomic file operations for safe concurrent access, tracks download progress,
+    and maintains statistics for reporting and incremental downloads.
+
+    Args:
+        state_file (str): Path to the state file (JSON).
+        incremental (bool): If True, loads existing state; otherwise, starts fresh.
+    """
+
+    def __init__(self, state_file: str = "download_state.json", incremental: bool = True) -> None:
+        """
+        Initialize the DownloadState.
+
+        Args:
+            state_file (str): Path to the state file (JSON).
+            incremental (bool): If True, loads existing state; otherwise, starts fresh.
+        """
+        self.state_file: str = state_file
+        self._cache: Dict[str, Any] = {}  # Local cache to reduce disk access
+        # Garante que o diretório existe
+        state_dir = os.path.dirname(os.path.abspath(self.state_file))
+        if state_dir and not os.path.exists(state_dir):
+            os.makedirs(state_dir, exist_ok=True)
+        if incremental:
+            self.load_state()
+        else:
+            self.generate()
+
+    def generate(self) -> Dict[str, Any]:
+        """
+        Initialize a fresh state structure and salva no disco.
+
+        Returns:
+            dict: The initialized state dictionary.
+        """
+        self._cache = {
+            'completed': {},
+            'failed': {},
+            'delays_success': [],
+            'delays_failed': [],
+            'stats': {
+                'start_time': datetime.now().isoformat(),
+                'last_update': None,
+                'total_bytes': 0,
+                'delay_stats_success': {
+                    'min': None,
+                    'max': None,
+                    'avg': None,
+                    'median': None,
+                    'percentiles': {}
+                },
+                'delay_stats_failed': {
+                    'min': None,
+                    'max': None,
+                    'avg': None,
+                    'median': None,
+                    'percentiles': {}
+                }
+            }
+        }
+        # Salva imediatamente o estado inicial
+        with open(self.state_file, 'w', encoding='utf-8') as f:
+            json.dump(self._cache, f, indent=2)
+        return self._cache
+
+    def _atomic_file_operation(self, operation: Callable[[], None]) -> None:
+        """
+        Execute file operations with locking for safe concurrent access.
+
+        Args:
+            operation (callable): Function to execute atomically.
+        """
+        if not os.path.exists(self.state_file):
+            self.generate()
+
+        with open(self.state_file, 'a+') as f:
+            try:
+                portalocker.lock(f, portalocker.LOCK_EX)
+                f.seek(0)
+                try:
+                    content = f.read()
+                    self._cache = json.loads(content) if content.strip() else self.generate()
+                except json.JSONDecodeError:
+                    self._cache = self.generate()
+
+                operation()
+
+                f.seek(0)
+                f.truncate()
+                json.dump(self._cache, f, indent=2)
+            finally:
+                portalocker.unlock(f)
+
+    def add_delay(self, delay: float, success: bool = True) -> None:
+        """
+        Record a new delay and update statistics.
+
+        Args:
+            delay (float): Delay value in seconds.
+            success (bool): True if the delay was for a successful download.
+        """
+        def _add() -> None:
+            delay_record = {
+                'value': delay,
+                'timestamp': datetime.now().isoformat()
+            }
+            key = 'delays_success' if success else 'delays_failed'
+            self._cache[key].append(delay_record)
+            stats_key = f'delay_stats_{"success" if success else "failed"}'
+            delays = [d['value'] for d in self._cache[key]]
+            if delays:
+                self._cache['stats'][stats_key] = {
+                    'min': min(delays),
+                    'max': max(delays),
+                    'avg': sum(delays) / len(delays),
+                    'median': sorted(delays)[len(delays)//2],
+                    'percentiles': {
+                        '90th': np.percentile(delays, 90) if len(delays) > 1 else delays[0],
+                        '95th': np.percentile(delays, 95) if len(delays) > 1 else delays[0]
+                    }
+                }
+            self._cache['stats']['last_update'] = datetime.now().isoformat()
+        self._atomic_file_operation(_add)
+
+    def load_state(self) -> None:
+        """
+        Load state from file.
+        """
+        if os.path.exists(self.state_file):
+            with open(self.state_file, 'r') as f:
+                try:
+                    self._cache = json.load(f)
+                except json.JSONDecodeError:
+                    self.generate()
+        else:
+            self.generate()
+
+    def save_state(self) -> None:
+        """
+        Save the current state to file.
+        """
+        def _save() -> None:
+            self._cache['stats']['last_update'] = datetime.now().isoformat()
+        self._atomic_file_operation(_save)
+
+    def get_file_id(self, url: str) -> str:
+        """
+        Generate a unique file ID for a given URL.
+
+        Args:
+            url (str): File URL.
+
+        Returns:
+            str: MD5 hash of the URL.
+        """
+        return hashlib.md5(url.encode()).hexdigest()
+
+    def is_completed(self, url: str) -> bool:
+        """
+        Check if a file has already been downloaded.
+
+        Args:
+            url (str): File URL.
+
+        Returns:
+            bool: True if completed, False otherwise.
+        """
+        return self.get_file_id(url) in self._cache['completed']
+
+    def add_completed(self, url: str, filepath: str, size: int) -> None:
+        """
+        Mark a file as successfully downloaded.
+
+        Args:
+            url (str): File URL.
+            filepath (str): Local file path.
+            size (int): File size in bytes.
+        """
+        def _add() -> None:
+            file_id = self.get_file_id(url)
+            self._cache['completed'][file_id] = {
+                'url': url,
+                'filepath': filepath,
+                'size': size,
+                'timestamp': datetime.now().isoformat()
+            }
+            self._cache['stats']['total_bytes'] += size
+            self._cache['stats']['last_update'] = datetime.now().isoformat()
+            if file_id in self._cache['failed']:
+                del self._cache['failed'][file_id]
+        self._atomic_file_operation(_add)
+
+    def add_failed(self, url: str, error: Any) -> None:
+        """
+        Mark a file as failed to download.
+
+        Args:
+            url (str): File URL.
+            error (str): Error message.
+        """
+        def _add() -> None:
+            file_id = self.get_file_id(url)
+            current_retries = self._cache['failed'].get(file_id, {}).get('retries', 0)
+            self._cache['failed'][file_id] = {
+                'url': url,
+                'error': str(error),
+                'timestamp': datetime.now().isoformat(),
+                'retries': current_retries + 1
+            }
+            self._cache['stats']['last_update'] = datetime.now().isoformat()
+        self._atomic_file_operation(_add)
+
+    @property
+    def state(self) -> Dict[str, Any]:
+        """
+        Get the current state dictionary.
+
+        Returns:
+            dict: The current state.
+        """
+        return self._cache
 
 class ScraperLib:
     """
@@ -34,35 +261,33 @@ class ScraperLib:
         self,
         base_url: str,
         file_patterns: List[str],
-        download_dir: str = "tlc_data", # Default relative path
-        state_file: str = "state/download_state.json", # Default relative path
-        log_file: str = "logs/process_log.log", # Default relative path
-        output_dir: str = "output", # Default relative path
-        incremental: bool = False,
+        download_dir: str = "downloads", # Default relative to CWD
+        state_file: str = "state/download_state.json", # Default relative to CWD
+        log_file: str = "logs/scraper_log.log", # Default relative to CWD
+        output_dir: str = "output", # Default relative to CWD
+        incremental: bool = True,
         max_files: Optional[int] = None,
         max_concurrent: Optional[int] = None,
-        headers: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
         user_agents: Optional[List[str]] = None,
         report_prefix: str = "download_report",
         disable_logging: bool = False,
         disable_terminal_logging: bool = False,
         dataset_name: Optional[str] = None,
         disable_progress_bar: bool = False,
-        max_old_logs: int = 25,
-        max_old_runs: int = 25,
-        ray_instance: Optional[Any] = None,
-        chunk_size: Union[int, str] = 5 * 1024 * 1024,
+        max_old_logs: int = 10,
+        max_old_runs: int = 10,
+        ray_instance: Optional[Any] = None, # Accept external Ray instance
+        chunk_size: Union[str, int] = "5MB",
         initial_delay: float = 1.0,
         max_delay: float = 60.0,
         max_retries: int = 5,
-        project_root: Optional[str] = None # Allow overriding project root
     ) -> None:
         """
         Initializes the ScraperLib instance. Paths are relative to project root unless absolute.
 
         Args:
             # ... (other args) ...
-            project_root (Optional[str]): Explicit project root path. If None, inferred from this file's location.
         """
         self.base_url = base_url
         self.file_patterns = file_patterns
@@ -84,29 +309,57 @@ class ScraperLib:
         self.max_delay = max_delay
         self.max_retries = max_retries
 
-        # --- Process and create paths ---
-        self.project_root = os.path.abspath(project_root or PROJECT_ROOT_FROM_SRC)
+        # --- Path Resolution ---
+        # Use the current working directory as the base for resolving relative paths.
+        base_path = Path.cwd()
+        self.download_dir = str((base_path / download_dir).resolve())
+        self.state_file = str((base_path / state_file).resolve())
+        self.log_file = str((base_path / log_file).resolve())
+        self.output_dir = str((base_path / output_dir).resolve())
+        self.report_dir = str(Path(self.output_dir) / "reports") # Define report dir
 
-        # Convert to absolute paths based on project_root
-        self.download_dir = os.path.join(self.project_root, download_dir) if not os.path.isabs(download_dir) else download_dir
-        self.state_file = os.path.join(self.project_root, state_file) if not os.path.isabs(state_file) else state_file
-        self.log_file = os.path.join(self.project_root, log_file) if not os.path.isabs(log_file) else log_file
-        self.output_dir = os.path.join(self.project_root, output_dir) if not os.path.isabs(output_dir) else output_dir
-        self.report_dir = os.path.join(self.output_dir, "reports") # Define report dir based on output_dir
+        # --- Ensure Directories Exist ---
+        Path(self.state_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        Path(self.report_dir).mkdir(parents=True, exist_ok=True)
+        # download_dir is created later by _download_file_ray if needed
 
-        # Ensure directories exist
-        os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
-        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
-        os.makedirs(self.download_dir, exist_ok=True)
-        os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(self.report_dir, exist_ok=True) # Also create report directory
-        # --- End path processing ---
+        # --- Ray Setup ---
+        self._ray_initialized_internally = False
+        if self.ray_instance is None:
+            if not ray.is_initialized():
+                print("Info: Initializing internal Ray instance...")
+                # Define runtime_env for internally managed Ray
+                # This assumes the package is installable via 'pip install .'
+                # from the directory where the user runs their script (if it's the project root)
+                # OR that the package is installed in the environment.
+                runtime_env = {"pip": ["."]} # Assumes run from project root OR package installed
+                # If installed from PyPI: runtime_env = {"pip": ["scraper-lib-rmp"]}
 
-        # Logger and state handler are now initialized in run() or lazily,
-        # as they depend on the log file path which is now absolute.
-        # We store the paths here, but initialization happens later.
-        self.logger: Optional[logging.Logger] = None # Initialize later
-        self.state_handler: Optional[DownloadState] = None # Initialize later
+                try:
+                    ray.init(
+                        num_cpus=self.max_concurrent, # Use max_concurrent as hint
+                        include_dashboard=False,
+                        logging_level=logging.ERROR, # Keep Ray's own logging minimal
+                        ignore_reinit_error=True,
+                        runtime_env=runtime_env
+                    )
+                    self.ray_instance = ray # Use the newly initialized instance
+                    self._ray_initialized_internally = True
+                    print(f"Info: Internal Ray initialized with runtime_env: {runtime_env}")
+                except Exception as e:
+                    print(f"Error: Failed to initialize internal Ray instance: {e}. Parallelism disabled.")
+                    self.ray_instance = None # Ensure Ray is disabled if init fails
+            else:
+                 print("Info: Using existing external Ray instance.")
+                 self.ray_instance = ray # Assign the existing global instance
+
+        # --- Logger and State Handler ---
+        # Initialize logger (now that paths are absolute and dirs exist)
+        self.logger = self._setup_logger() if not self.disable_logging else None
+        # Initialize state handler
+        self.state_handler = DownloadState(state_file=self.state_file, incremental=self.incremental)
 
         self.session = requests.Session() # Session can be initialized here
         # Headers will be updated in run()
@@ -983,3 +1236,4 @@ Arguments:
             return int(size_str)
         except Exception:
             raise ValueError(f"Invalid chunk size: {size_str}")
+
