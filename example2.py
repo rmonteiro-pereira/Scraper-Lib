@@ -10,6 +10,7 @@ if __name__ == "__main__":
         log_file="scraper_logs/process.log",
         output_dir="scraper_output",
         incremental=True,
+        chunk_size='1gb',
         max_concurrent=16,
         dataset_name="TLC DATA",
         max_old_logs=10,
