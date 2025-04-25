@@ -16,6 +16,7 @@ permissions:
 jobs:
   test-lint-type-build:
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' #saving minutes on gh actions
 
     steps:
     - name: Checkout repository
