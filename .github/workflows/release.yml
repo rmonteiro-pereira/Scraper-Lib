@@ -8,6 +8,11 @@ on:
         required: true
         default: 'patch'
 
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   bump-version:
     runs-on: ubuntu-latest
@@ -21,6 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Set up Git user
         run: |
