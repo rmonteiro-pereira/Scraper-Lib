@@ -1,6 +1,6 @@
 [project]
 name = "Scraper-Lib-RMP"
-version = "0.2.172"
+version = "0.2.173"
 description = "Add your description here"
 readme = "README.md"
 authors = [{ name="Rodrigo Monteiro Pereira", email="rmonteiropereira1@gmail.com" }]
