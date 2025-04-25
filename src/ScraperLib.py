@@ -99,7 +99,13 @@ class DownloadState:
         Execute file operations with locking for safe concurrent access.
 
         Args:
-            operation (callable): Function to execute atomically.
+            operation (Callable[[], None]): Function to execute atomically.
+
+        Returns:
+            None
+
+        Raises:
+            IOError: If the state file cannot be written due to I/O errors.
         """
         if not os.path.exists(self.state_file):
             self.generate()
@@ -155,7 +161,16 @@ class DownloadState:
 
     def load_state(self) -> None:
         """
-        Load state from file.
+        Load state from disk into memory.
+
+        Reads the JSON from the configured state_file path and populates the internal cache.
+        If the file does not exist or contains invalid JSON, a fresh state is generated and saved.
+
+        Returns:
+            None
+
+        Raises:
+            IOError: If the state file cannot be opened or read.
         """
         if os.path.exists(self.state_file):
             with open(self.state_file, 'r') as f:
@@ -168,7 +183,16 @@ class DownloadState:
 
     def save_state(self) -> None:
         """
-        Save the current state to file.
+        Save the current state to disk.
+
+        Updates the 'last_update' timestamp and writes the in-memory state cache
+        to the state file using atomic (locked) file operations for safety.
+
+        Returns:
+            None
+
+        Raises:
+            IOError: If the state file cannot be written due to I/O errors.
         """
         def _save() -> None:
             self._cache['stats']['last_update'] = datetime.now().isoformat()
@@ -294,7 +318,34 @@ class ScraperLib:
         max_delay: float = 60.0,
         max_retries: int = 5,
     ) -> None:
-        # Use pathlib for robust absolute path handling
+        """
+        Initialize the ScraperLib instance.
+
+        Args:
+            base_url (str): The base URL to scrape for files.
+            file_patterns (List[str]): List of file patterns to match (e.g. .csv, .zip).
+            download_dir (str): Directory to store downloads.
+            state_file (str): Path to the state file (JSON).
+            log_file (str): Path to the log file.
+            output_dir (str): Directory for reports and PNGs.
+            incremental (bool): Enable incremental download state.
+            max_files (Optional[int]): Limit number of files to download.
+            max_concurrent (Optional[int]): Max parallel downloads.
+            headers (Optional[Dict[str, str]]): Custom HTTP headers.
+            user_agents (Optional[List[str]]): List of user-agents.
+            report_prefix (str): Prefix for report files.
+            disable_logging (bool): Disable all logging.
+            disable_terminal_logging (bool): Disable terminal logging.
+            dataset_name (Optional[str]): Dataset name for banner.
+            disable_progress_bar (bool): Disable tqdm progress bar.
+            max_old_logs (int): Max old log files to keep.
+            max_old_runs (int): Max old report/png runs to keep.
+            ray_instance (Optional[Any]): External Ray instance.
+            chunk_size (Union[str, int]): Chunk size for downloads.
+            initial_delay (float): Initial delay between retries (seconds).
+            max_delay (float): Maximum delay between retries (seconds).
+            max_retries (int): Maximum number of download retries.
+        """
         self.download_dir = str(Path(download_dir).expanduser().resolve())
         self.state_file = str(Path(state_file).expanduser().resolve())
         self.log_file = str(Path(log_file).expanduser().resolve())
@@ -339,6 +390,9 @@ class ScraperLib:
         self.all_file_links: Optional[List[str]] = None
 
     def _init_ray_if_needed(self) -> None:
+        """
+        Initializes Ray if not already initialized and no external instance is provided.
+        """
         if self.ray_instance is None:
             if not ray.is_initialized():
                 try:
@@ -351,7 +405,6 @@ class ScraperLib:
                     )
                     self.ray_instance = ray
                     self._ray_initialized_internally = True
-                    print("Ray initialized with runtime_env: pip install ScraperLib")
                 except Exception as e:
                     print(f"Failed to initialize Ray: {e}")
                     self.ray_instance = None
@@ -359,6 +412,12 @@ class ScraperLib:
                 self.ray_instance = ray
 
     def _setup_logger(self) -> CustomLogger:
+        """
+        Sets up the custom logger for the library.
+
+        Returns:
+            CustomLogger: Configured logger instance.
+        """
         return CustomLogger(
             banner=f"ScraperLib - {self.dataset_name}",
             log_file_path=self.log_file,
@@ -381,7 +440,7 @@ class ScraperLib:
             dst (str): Destination file path.
             max_retries (int): Maximum number of attempts.
             delay (float): Wait time between attempts.
-            logger (CustomLogger): Logger to record failures.
+            logger (Optional[CustomLogger]): Logger to record failures.
 
         Returns:
             bool: True if copy succeeded, False otherwise.
@@ -410,7 +469,7 @@ class ScraperLib:
         Args:
             base_path (str): Base file path (without extension).
             ext (str): File extension (e.g., ".json").
-            max_old_files (int): Maximum number of old files to keep.
+            max_old_files (Optional[int]): Maximum number of old files to keep.
         """
         if not os.path.exists(base_path + ext):
             return
@@ -456,10 +515,10 @@ class ScraperLib:
         Args:
             html_content (str): HTML content of the page.
             base_url (str): Base URL to resolve relative links.
-            patterns (list): List of file patterns.
+            patterns (List[str]): List of file patterns.
 
         Returns:
-            list: List of absolute URLs of found files.
+            List[str]: List of absolute URLs of found files.
         """
         soup: BeautifulSoup = BeautifulSoup(html_content, 'html.parser')
         file_links: List[str] = []
@@ -482,12 +541,12 @@ class ScraperLib:
 
         Args:
             url (str): Page URL.
-            user_agents (list): List of user-agents.
-            headers (dict): HTTP headers.
-            logger (CustomLogger): Logger to record errors.
+            user_agents (Optional[List[str]]): List of user-agents.
+            headers (Optional[Dict[str, Any]]): HTTP headers.
+            logger (Optional[CustomLogger]): Logger to record errors.
 
         Returns:
-            str: HTML content of the page, or None on error.
+            Optional[str]: HTML content of the page, or None on error.
         """
         headers = headers.copy() if headers else {}
         if user_agents:
@@ -516,12 +575,15 @@ class ScraperLib:
         Generates a JSON report and analysis PNGs of downloads, with file rotation.
 
         Args:
-            results (list): List of download results.
+            results (List[Dict[str, Any]]): List of download results.
             state (DownloadState): Download state.
-            report_prefix (str): Report prefix.
-            logger (CustomLogger): Logger to record info.
-            output_dir (str): Output directory for reports.
-            max_old_runs (int): Maximum number of old reports to keep.
+            report_prefix (Optional[str]): Report prefix.
+            logger (Optional[CustomLogger]): Logger to record info.
+            output_dir (Optional[str]): Output directory for reports.
+            max_old_runs (Optional[int]): Maximum number of old reports to keep.
+
+        Returns:
+            None
         """
         if report_prefix is None:
             report_prefix = self.report_prefix
@@ -701,20 +763,23 @@ class ScraperLib:
         disable_progress_bar: Optional[bool] = None
     ) -> List[Dict[str, Any]]:
         """
-        Performs parallel download of files using Ray.
+        Performs parallel download of a list of URLs using Ray actors.
 
         Args:
-            file_urls (list): List of file URLs to download.
-            headers (dict): HTTP headers.
-            user_agents (list): List of user-agents.
-            max_concurrent (int): Maximum number of parallel downloads.
-            download_dir (str): Destination directory.
-            state_handler (DownloadState): Download state handler.
-            logger (CustomLogger): Logger to record progress.
-            disable_progress_bar (bool): Disables progress bar.
+            file_urls (List[str]): URLs to download.
+            headers (Optional[Dict[str, Any]]): HTTP headers to use.
+            user_agents (Optional[List[str]]): List of User‑Agent strings.
+            download_dir (Optional[str]): Local directory to save files.
+            state_handler (Optional[DownloadState]): Tracks progress and retries.
+            logger (Optional[CustomLogger]): Logs informational messages.
+            disable_progress_bar (Optional[bool]): Turn off tqdm bar if True.
 
         Returns:
-            list: List of download results.
+            List[Dict[str, Any]]: A list of per‑file result dicts, each containing:
+              - status: "success" | "skipped" | "error"
+              - file: filepath or URL
+              - size, time, speed, attempts
+              - logs: List of (level,msg) tuples
         """
         headers = headers or self.headers
         user_agents = user_agents or self.user_agents
@@ -816,22 +881,33 @@ class ScraperLib:
         base_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Ray remote function for downloading a file.
+        Ray remote task to download a single file with retry logic.
 
         Args:
-            file_url (str): File URL.
-            headers (dict): HTTP headers.
-            user_agents (list): List of user-agents.
-            download_dir (str): Destination directory.
-            state_handler (DownloadState): Download state handler.
-            chunk_size (int): Chunk size in bytes for downloads.
-            initial_delay (float): Initial delay between retries (seconds).
-            max_delay (float): Maximum delay between retries (seconds).
-            max_retries (int): Maximum number of download retries.
-            base_url (str): Base URL for referer.
+            file_url (str): The URL to fetch.
+            headers (Dict[str,Any]): Base headers dict; will get a random User‑Agent and Referer.
+            user_agents (List[str]): Pool of User‑Agent strings to pick from.
+            download_dir (str): Directory to save the file.
+            state_handler (Optional[DownloadState]): to record success/fail and delays.
+            chunk_size (int): Bytes per read/write chunk.
+            initial_delay (float): Base back‑off delay in seconds.
+            max_delay (float): Upper limit for back‑off delay.
+            max_retries (int): Number of retry attempts on failure.
+base_url (Optional[str]): Referer header; defaults to file_url.
+base_url (Optional[str]): Referer header; defaults to file_url.
 
         Returns:
-            dict: Download result (status, file, logs, etc).
+            Dict[str,Any]: {
+              "status": "success"|"skipped"|"error",
+              "file": local path or URL,
+              "size": bytes downloaded,
+              "time": duration in s,
+              "speed": bytes/sec,
+              "attempts": int,
+              "logs": List[(level,msg)],
+              "error"?: str,
+              "retry_count"?: int,
+            }
         """
         CHUNK_SIZE = chunk_size
         INITIAL_DELAY = initial_delay
@@ -1225,13 +1301,13 @@ Arguments:
         Parse a human-readable chunk size string (e.g., '1gb', '10mb', '8 bytes') into an integer number of bytes.
 
         Args:
-            size_str (str): Chunk size as a string.
+            size_str (str): Chunk size, e.g. "1gb", "10mb", "8 bytes", or a plain integer string.
 
         Returns:
             int: Chunk size in bytes.
 
         Raises:
-            ValueError: If the string cannot be parsed.
+            ValueError: If the string cannot be parsed to a number of bytes.
         """
         size_str = size_str.strip().lower().replace(" ", "")
         units = {
@@ -1253,4 +1329,32 @@ Arguments:
             return int(size_str)
         except Exception:
             raise ValueError(f"Invalid chunk size: {size_str}")
+
+    def __repr__(self) -> str:
+        """
+        Return a concise string representation of this ScraperLib instance.
+
+        Returns:
+            str: e.g. "<ScraperLib(base_url=…, patterns=[…], download_dir=…, …)>"
+        """
+        return (
+            f"<ScraperLib(base_url={self.base_url}, patterns={self.file_patterns}, "
+            f"download_dir={self.download_dir}, max_files={self.max_files}, "
+            f"max_concurrent={self.max_concurrent})>"
+        )
+
+    def __del__(self) -> None:
+        """
+        Destructor that shuts down Ray if it was initialized internally.
+
+        Returns:
+            None
+        """
+        try:
+            if getattr(self, "_ray_initialized_internally", False) and ray.is_initialized():
+                ray.shutdown()
+        except Exception:
+            pass
+
+# End of file
 
