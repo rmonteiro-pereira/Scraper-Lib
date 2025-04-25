@@ -110,63 +110,31 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           tags: true
+  publish-pypi:
+    runs-on: ubuntu-latest
+    needs: bump-version
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
 
-          
-#   publish-pypi:
-#     runs-on: ubuntu-latest
-#     needs: test-lint-type-build # Run only if tests pass
-#     # Trigger only when a tag matching v*.*.* is created
-    # if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-#     environment:
-#       name: pypi
-#       url: https://pypi.org/p/scraper-lib-rmp # Link to PyPI page (update name)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-#     permissions:
-#       # IMPORTANT: Required for trusted publishing
-#       id-token: write
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip build
 
-#     steps:
-#     - name: Checkout repository
-#       uses: actions/checkout@v4
+      - name: Build package
+        run: python -m build
 
-#     - name: Set up Python
-#       uses: actions/setup-python@v5
-#       with:
-#         python-version: '3.12'
-
-#     - name: Install build dependencies
-#       run: |
-#         python -m pip install --upgrade pip build
-
-#     - name: Build package
-#       run: python -m build
-
-#     - name: Publish package to PyPI
-#       # Uses PyPI's trusted publisher flow (requires setup on PyPI)
-#       uses: pypa/gh-action-pypi-publish@release/v1
-#       # No API token needed here if trusted publishing is configured
-
-    # Optional: Publish to TestPyPI first (requires separate environment/secrets)
-    # - name: Publish package to TestPyPI
-    #   uses: pypa/gh-action-pypi-publish@release/v1
-    #   with:
-    #     repository-url: https://test.pypi.org/legacy/
-    #     # Use API token stored as secret for TestPyPI if not using trusted publishing
-    #     # password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
 
 
-# **Before Publishing:**
-
-# 1.  **Test Locally:**
-#     *   `pip install -e .[dev]`
-#     *   `ruff check src tests`
-#     *   `ruff format src tests`
-#     *   `mypy src`
-#     *   `pytest`
-#     *   `sphinx-build -b html docs docs/_build/html`
-# 2.  **Configure PyPI:**
-#     *   Create accounts on [PyPI](https://pypi.org/) and [TestPyPI](https://test.pypi.org/).
-#     *   Set up **Trusted Publishing** on PyPI for your project and this GitHub Actions workflow. This avoids needing API tokens in GitHub secrets. Follow the PyPI documentation for this.
-# 3.  **Push to GitHub:** Commit all changes and push to your repository.
-# 4.  **Tag for Release:** Once ready, create a Git tag (e.g., `git tag v0.1.0`, `git push origin v0.1.0`). This will trigger the `publish-pypi` job in the workflow.
