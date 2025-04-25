@@ -6,6 +6,8 @@
 
 ---
 
+[📚 **Documentation**](https://rmonteiro-pereira.github.io/Scraper-Lib/)
+
 <pre>
 <span style="color:#FFD700;">   _____                                 _      _ _     </span>
 <span style="color:#00BFFF;">  / ____|                               | |    (_) |    </span>
@@ -111,20 +113,20 @@ python -m scraper_lib --help
 ### Programmatic Usage
 
 ```python
-from scraper_lib import ScraperLib
+from ScraperLib import ScraperLib
 
 scraper = ScraperLib(
-    base_url="https://example.com/data",
-    file_patterns=[".csv", ".parquet", ".zip"],
-    download_dir="data",
-    incremental=True,
-    max_files=2,
-    max_concurrent=16,
-    chunk_size="10mb",  # or 10485760
-    initial_delay=1.0,
-    max_delay=60.0,
-    max_retries=5,
-    dataset_name="MY DATASET"
+    base_url: str = "https://example.com/data",
+    file_patterns: List[str] = [".csv", ".parquet", ".zip"],
+    download_dir: str = "data",
+    incremental: bool = True,
+    max_files: Optional[int] = 2,
+    max_concurrent: Optional[int] = 16,
+    chunk_size: Union[str, int] = "10mb",
+    initial_delay: float = 1.0,
+    max_delay: float = 60.0,
+    max_retries: int = 5,
+    dataset_name: Optional[str] = "MY DATASET"
 )
 scraper.run()
 ```
