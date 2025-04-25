@@ -79,7 +79,39 @@ jobs:
               
         - name: Deploy to GitHub Pages
           uses: actions/deploy-pages@v4
-   
+
+  bump-version:
+    runs-on: ubuntu-latest
+    needs: build-docs 
+    if: github.ref == 'refs/heads/master' # Build docs only on master branch merge
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git user
+        run: |
+            git config --global user.email "ci-bot@example.com"
+            git config --global user.name "CI Bot"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install bump2version
+        run: pip install bump2version
+
+      - name: Bump version
+        run: bump2version patch
+
+      - name: Push changes
+        uses: ad-m/github-push-action@v0.8.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tags: true
+
+          
 #   publish-pypi:
 #     runs-on: ubuntu-latest
 #     needs: test-lint-type-build # Run only if tests pass
