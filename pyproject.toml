@@ -3,6 +3,7 @@ name = "Scraper-Lib"
 version = "0.2.1"
 description = "Add your description here"
 readme = "README.md"
+authors = [{ name="Rodrigo Monteiro Pereira", email="rmonteiropereira1@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4>=4.13.4",
@@ -34,7 +35,6 @@ docs = [
     "sphinx-copybutton>=0.5.2",
     "sphinx-design>=0.6.1",
 ]
-[tool.semantic_release]
-version_variable = "src/your_package/__init__.py:__version__"
-branch = "main"
-upload_to_pypi = false  # Let your publish workflow handle PyPI upload
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
