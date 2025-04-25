@@ -2,7 +2,7 @@
 """
 ScraperLib: A library for parallel web scraping and downloading.
 """
-__version__ = "0.2.251" # Define version here
+__version__ = "0.2.252" # Define version here
 
 # Make the main class and components easily importable
 from .ScraperLib import ScraperLib, DownloadState
