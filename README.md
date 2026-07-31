@@ -41,24 +41,22 @@
 
 ## 📦 Installation
 
+Requires **Python 3.12+**.
+
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/scraper-lib.git
-   cd scraper-lib
+   git clone https://github.com/rmonteiro-pereira/Scraper-Lib.git
+   cd Scraper-Lib
    ```
 
-2. **Install dependencies:**
+2. **Install dependencies** — the project uses [uv](https://docs.astral.sh/uv/)
+   and ships a committed `uv.lock`, so this reproduces the exact resolved set:
    ```bash
-   pip install -r requirements.txt
+   uv sync
    ```
-   Or, if you use [Poetry](https://python-poetry.org/):
+   Or with pip, installing the package itself in editable mode:
    ```bash
-   poetry install
-   ```
-   Or, for faster installs (recommended for Linux/Mac):
-   ```bash
-   pip install uv
-   uv pip install -r requirements.txt
+   pip install -e .
    ```
 
    *Main dependencies:*
@@ -167,8 +165,8 @@ pytest tests
 │   ├── DownloadState.py        # Download state management
 │   ├── CustomLogger.py         # Custom logger
 ├── example.py                  # Example usage (runnable from root)
-├── requirements.txt            # Dependencies
-├── pyproject.toml              # Project metadata
+├── pyproject.toml              # Project metadata and dependencies
+├── uv.lock                     # Locked, reproducible dependency set
 ├── output/
 │   ├── pngs/                   # Download delay analysis PNGs
 │   └── reports/                # Download reports (JSON)
