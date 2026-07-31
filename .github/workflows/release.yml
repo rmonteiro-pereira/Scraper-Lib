@@ -44,8 +44,60 @@ jobs:
       - name: Bump version
         run: bump2version ${{ github.event.inputs.part }}
 
+      # bump2version writes the new number into pyproject.toml and tags it
+      # v<version> (its default). Read it back so the release can be named.
+      - name: Read the new version
+        id: ver
+        run: |
+          version=$(grep -m1 -E '^version *= *"' pyproject.toml | cut -d'"' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version"    >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+
       - name: Push changes
         uses: ad-m/github-push-action@v0.8.0
         with:
           github_token: ${{ steps.app-token.outputs.token }}
           tags: true
+
+      # A git tag is NOT a GitHub Release — a Release is a separate API object.
+      # Nothing in this repository ever created one, which is why it had 336
+      # tags and an empty Releases tab. This is that missing step.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --generate-notes \
+            --verify-tag
+
+  # Moved here from ci-cd.yml. Publishing is a release action, not something a
+  # push to master should do — that arrangement put 330 versions on PyPI.
+  publish-pypi:
+    runs-on: ubuntu-latest
+    needs: bump-version
+    permissions:
+      id-token: write   # trusted publishing
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: master     # pick up the commit the bump job just pushed
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
