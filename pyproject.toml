@@ -1,6 +1,6 @@
 [project]
 name = "Scraper-Lib-RMP"
-version = "0.2.298"
+version = "0.2.299"
 description = "Resilient parallel bulk file downloader: Ray-based workers, retry/backoff, incremental mode and atomic state tracking."
 readme = "README.md"
 license = "MIT"
