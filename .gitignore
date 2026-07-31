@@ -6,6 +6,11 @@ dist/
 wheels/
 *.egg-info
 
+# Generated documentation. The "Deploy Documentation" workflow rebuilds this
+# from source with sphinx-build and publishes it to Pages, so the built HTML
+# does not belong in the repository.
+docs/_build/
+
 # Virtual environments
 .venv
 /tlc_data

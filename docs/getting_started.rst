@@ -8,9 +8,9 @@ Command Line Interface
 ------------------------
 .. code-block:: bash
 
-   git clone https://github.com/seuusuario/Scraper-Lib.git
+   git clone https://github.com/rmonteiro-pereira/Scraper-Lib.git
    cd Scraper-Lib
-   pip install -r requirements.txt
+   uv sync
 
 Quick Example
 -------------
