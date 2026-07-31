@@ -1,8 +1,9 @@
 [project]
 name = "Scraper-Lib-RMP"
 version = "0.2.296"
-description = "Add your description here"
+description = "Resilient parallel bulk file downloader: Ray-based workers, retry/backoff, incremental mode and atomic state tracking."
 readme = "README.md"
+license = "MIT"
 authors = [{ name="Rodrigo Monteiro Pereira", email="rmonteiropereira1@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
