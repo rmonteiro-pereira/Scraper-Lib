@@ -1,4 +1,4 @@
-from ScraperLib import ScraperLib
+from scraper_lib import ScraperLib
 
 if __name__ == "__main__":
 

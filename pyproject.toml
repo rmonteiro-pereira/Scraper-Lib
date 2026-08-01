@@ -11,21 +11,25 @@ dependencies = [
     "colorama>=0.4.6",
     "filelock>=3.18.0",
     "matplotlib>=3.10.1",
-    "mypy>=1.15.0",
-    "myst-parser>=4.0.1",
+    "numpy>=1.26",
     "portalocker>=3.1.1",
-    "prettyprint>=0.1.5",
     "ray>=2.44.1",
     "requests>=2.32.3",
     "rich>=14.0.0",
-    "ruff>=0.11.6",
     "tqdm>=4.67.1",
-    "virtualenv>=20.30.0",
 ]
+
+# `scraper` is the command documented in docs/cli.rst. Without this entry point
+# that page described a binary that no installation ever produced.
+[project.scripts]
+scraper = "scraper_lib.cli:main"
 
 [dependency-groups]
 dev = [
+    "mypy>=1.15.0",
     "pytest>=8.3.5",
+    "ruff>=0.11.6",
+    "virtualenv>=20.30.0",
 ]
 docs = [
     "myst-parser>=4.0.1",
@@ -36,6 +40,18 @@ docs = [
     "sphinx-copybutton>=0.5.2",
     "sphinx-design>=0.6.1",
 ]
+
+# Without this section setuptools falls back to flat-layout auto-discovery and
+# the wheel drops ScraperLib.py, CustomLogger.py and a bare __init__.py at the
+# ROOT of site-packages, squatting the global names `ScraperLib` and
+# `CustomLogger`. Declaring the src-layout keeps everything under the single
+# `scraper_lib` package.
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"

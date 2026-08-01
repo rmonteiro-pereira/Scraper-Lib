@@ -1,7 +1,7 @@
 import ray
 from pathlib import Path
 
-from ScraperLib import ScraperLib  # Always import as installed package
+from scraper_lib import ScraperLib  # Always import as installed package
 
 if __name__ == "__main__":
     ray.shutdown()

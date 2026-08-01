@@ -1,5 +1,5 @@
 import pytest
-from ScraperLib import ScraperLib
+from scraper_lib import ScraperLib
 
 
 @pytest.fixture
@@ -108,5 +108,6 @@ def test_init_sets_attributes(scraper):
     assert scraper.file_patterns == [".csv"]
     assert scraper.max_files == 1
 
-def test_cli_exists():
-    assert hasattr(ScraperLib, "cli")
+# `test_cli_exists` used to live here as `assert hasattr(ScraperLib, "cli")`.
+# It was green while every documented way of launching the CLI failed. The real
+# invocations are exercised in tests/test_cli_entrypoints.py.

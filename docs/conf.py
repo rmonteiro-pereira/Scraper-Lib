@@ -1,12 +1,16 @@
 import os
 import sys
-# Adiciona o diretório raiz do projeto (um nível acima de 'docs') ao sys.path
-sys.path.insert(0, os.path.abspath('..'))
+
+# The package lives at src/scraper_lib, so 'src' is what belongs on sys.path.
+# This lets `sphinx-build` work from a checkout without an install; when the
+# package IS installed (as in CI) the import resolves either way.
 sys.path.insert(0, os.path.abspath('../src'))
+
 project = 'ScraperLib'
-copyright = '2025, Seu Nome'
-author = 'Seu Nome'
-release = '0.1.0'
+copyright = '2025, Rodrigo Monteiro Pereira'
+author = 'Rodrigo Monteiro Pereira'
+
+from scraper_lib import __version__ as release  # noqa: E402
 
 extensions = [
     'sphinx.ext.autodoc',
@@ -20,13 +24,14 @@ extensions = [
 templates_path = ['_templates']
 exclude_patterns = []
 html_theme = 'pydata_sphinx_theme'
-html_static_path = ['_static']
+# No docs/_static directory is committed; listing it only produced a warning
+# on every build.
+html_static_path = []
 
 # Adicione ou modifique estas opções do tema
+# The version switcher used to point at https://example.com/versions.json, a
+# placeholder that 404s on every build and rendered a dead control on the
+# published site. There is only one published version of these docs.
 html_theme_options = {
-    "navbar_end": ["version-switcher", "theme-switcher", "navbar-icon-links"],
-    "switcher": {
-        "json_url": "https://example.com/versions.json",
-        "version_match": "latest",
-    },
+    "navbar_end": ["theme-switcher", "navbar-icon-links"],
 }
