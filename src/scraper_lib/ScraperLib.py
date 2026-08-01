@@ -355,7 +355,11 @@ class ScraperLib:
         self.file_patterns = file_patterns
         self.incremental = incremental
         self.max_files = max_files
-        self.max_concurrent = max_concurrent or min(os.cpu_count() or 16)
+        # `min(os.cpu_count() or 16)` -- min() of a single int -- raised
+        # "TypeError: 'int' object is not iterable" for every caller that did not
+        # pass max_concurrent, which is the CLI's own default path. The cap of 16
+        # matches the one run() applies a few hundred lines below.
+        self.max_concurrent = max_concurrent or min(os.cpu_count() or 16, 16)
         self.headers = headers
         self.user_agents = user_agents
         self.report_prefix = report_prefix

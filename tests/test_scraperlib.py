@@ -111,3 +111,23 @@ def test_init_sets_attributes(scraper):
 # `test_cli_exists` used to live here as `assert hasattr(ScraperLib, "cli")`.
 # It was green while every documented way of launching the CLI failed. The real
 # invocations are exercised in tests/test_cli_entrypoints.py.
+
+def test_default_max_concurrent_does_not_crash(tmp_path):
+    """Constructing without max_concurrent used to raise TypeError.
+
+    `min(os.cpu_count() or 16)` -- min() of a single int -- blew up on the CLI's
+    own default path, so `scraper --url ... --patterns .csv` died before it made
+    a single request. Every existing test happened to pass max_concurrent.
+    """
+    s = ScraperLib(
+        base_url="https://example.com",
+        file_patterns=[".csv"],
+        download_dir=str(tmp_path / "data"),
+        state_file=str(tmp_path / "state.json"),
+        log_file=str(tmp_path / "log.log"),
+        output_dir=str(tmp_path / "output"),
+        disable_logging=True,
+        disable_terminal_logging=True,
+    )
+    assert isinstance(s.max_concurrent, int)
+    assert 1 <= s.max_concurrent <= 16
