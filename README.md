@@ -41,7 +41,10 @@
 
 ## 📦 Installation
 
-Requires **Python 3.12+**.
+Requires **Python 3.12**. The pinned `ray` release publishes `cp312` wheels only,
+so the repository ships a `.python-version` and `uv` selects the right
+interpreter for you — on 3.13 the install fails with
+`ray==2.44.1 ... doesn't have a source distribution or wheel for the current platform`.
 
 1. **Clone the repository:**
    ```bash
@@ -53,6 +56,7 @@ Requires **Python 3.12+**.
    and ships a committed `uv.lock`, so this reproduces the exact resolved set:
    ```bash
    uv sync
+   uv pip install .
    ```
    Or with pip, installing the package itself in editable mode:
    ```bash
@@ -75,7 +79,16 @@ Requires **Python 3.12+**.
 
 ### CLI
 
+Installing the package puts a `scraper` command on your `PATH`:
+
 ```bash
+scraper --url <URL> --patterns .csv .zip --dir data --max-files 10
+```
+
+The module forms are equivalent:
+
+```bash
+python -m scraper_lib --url <URL> --patterns .csv .zip --dir data --max-files 10
 python -m scraper_lib.cli --url <URL> --patterns .csv .zip --dir data --max-files 10
 ```
 
@@ -105,26 +118,30 @@ python -m scraper_lib.cli --url <URL> --patterns .csv .zip --dir data --max-file
 
 See all options with:
 ```bash
-python -m scraper_lib --help
+scraper --help
 ```
+
+The full, generated option reference lives at
+[the CLI page of the docs](https://rmonteiro-pereira.github.io/Scraper-Lib/cli.html),
+rendered by Sphinx from the real `argparse` definition.
 
 ### Programmatic Usage
 
 ```python
-from ScraperLib import ScraperLib
+from scraper_lib import ScraperLib
 
 scraper = ScraperLib(
-    base_url: str = "https://example.com/data",
-    file_patterns: List[str] = [".csv", ".parquet", ".zip"],
-    download_dir: str = "data",
-    incremental: bool = True,
-    max_files: Optional[int] = 2,
-    max_concurrent: Optional[int] = 16,
-    chunk_size: Union[str, int] = "10mb",
-    initial_delay: float = 1.0,
-    max_delay: float = 60.0,
-    max_retries: int = 5,
-    dataset_name: Optional[str] = "MY DATASET"
+    base_url="https://example.com/data",
+    file_patterns=[".csv", ".parquet", ".zip"],
+    download_dir="data",
+    incremental=True,
+    max_files=2,
+    max_concurrent=16,
+    chunk_size="10mb",
+    initial_delay=1.0,
+    max_delay=60.0,
+    max_retries=5,
+    dataset_name="MY DATASET",
 )
 scraper.run()
 ```
@@ -133,7 +150,11 @@ scraper.run()
 
 ## 🛡️ Anti-Blocking Protocols
 
-- **User-Agent Rotation:** Randomizes user-agent strings on each request and after 403 errors.
+- **User-Agent Rotation:** Randomizes the user-agent on **every** request, so a retry
+  after a 403 never replays the identity that was just blocked. Held to it by
+  `tests/test_user_agent_rotation.py`, which stands up a server that answers 403 to
+  the first five requests and asserts the server saw more than one distinct
+  user-agent.
 - **Referer Header:** Sets a realistic referer to mimic browser behavior.
 - **Session Management:** Uses a new HTTP session for each attempt.
 - **Exponential Backoff:** Waits longer between retries to avoid rate-limiting.
@@ -160,20 +181,31 @@ pytest tests
 ```
 .
 ├── src/
-│   ├── __init__.py             # Makes src a package
-│   ├── scraper_lib.py          # Main library
-│   ├── DownloadState.py        # Download state management
-│   ├── CustomLogger.py         # Custom logger
+│   └── scraper_lib/            # The installed package
+│       ├── __init__.py         # Public API: ScraperLib, DownloadState, CustomLogger
+│       ├── ScraperLib.py       # Main library; also defines the DownloadState class
+│       ├── CustomLogger.py     # Custom logger
+│       ├── cli.py              # Entry point behind the `scraper` command
+│       └── __main__.py         # Makes `python -m scraper_lib` work
+├── tests/                      # Unit tests
+├── docs/                       # Sphinx sources for the published documentation
 ├── example.py                  # Example usage (runnable from root)
+├── example2.py                 # Minimal example
 ├── pyproject.toml              # Project metadata and dependencies
 ├── uv.lock                     # Locked, reproducible dependency set
-├── output/
-│   ├── pngs/                   # Download delay analysis PNGs
-│   └── reports/                # Download reports (JSON)
-├── data/                       # Downloaded files
-├── logs/                       # Log files
-├── state/                      # Download state (auto-generated)
-├── tests/                      # Unit tests
+└── .python-version             # Pins CPython 3.12 (ray ships cp312 wheels only)
+```
+
+Output directories are **not** part of the repository — they are created at
+runtime, next to wherever you run the scraper, and their names come from the
+`--dir`, `--output-dir`, `--log-file` and `--state-file` options:
+
+```
+data/                           # Downloaded files          (--dir)
+<output-dir>/reports/           # Download reports (JSON)    (--output-dir)
+<output-dir>/pngs/              # Delay analysis PNGs        (--output-dir)
+logs/                           # Log files                  (--log-file)
+state/                          # Download state             (--state-file)
 ```
 
 ---

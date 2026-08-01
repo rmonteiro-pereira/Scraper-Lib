@@ -1,5 +1,5 @@
 import os
-from ScraperLib import DownloadState
+from scraper_lib import DownloadState
 
 def test_init_and_generate(tmp_path):
     state_file = tmp_path / "state.json"

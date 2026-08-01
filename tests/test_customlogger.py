@@ -1,5 +1,5 @@
 import logging
-from CustomLogger import CustomLogger
+from scraper_lib import CustomLogger
 
 def test_logger_creation(tmp_path):
     log_file = tmp_path / "test.log"

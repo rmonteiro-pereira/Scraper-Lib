@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import requests
@@ -19,12 +20,11 @@ import numpy as np
 from datetime import datetime
 import gc
 import shutil
-from CustomLogger import CustomLogger
+from .CustomLogger import CustomLogger
 import portalocker
 import hashlib
 from pathlib import Path
 
-PROJECT_ROOT_FROM_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class DownloadState:
     """
@@ -355,7 +355,11 @@ class ScraperLib:
         self.file_patterns = file_patterns
         self.incremental = incremental
         self.max_files = max_files
-        self.max_concurrent = max_concurrent or min(os.cpu_count() or 16)
+        # `min(os.cpu_count() or 16)` -- min() of a single int -- raised
+        # "TypeError: 'int' object is not iterable" for every caller that did not
+        # pass max_concurrent, which is the CLI's own default path. The cap of 16
+        # matches the one run() applies a few hundred lines below.
+        self.max_concurrent = max_concurrent or min(os.cpu_count() or 16, 16)
         self.headers = headers
         self.user_agents = user_agents
         self.report_prefix = report_prefix
@@ -396,7 +400,18 @@ class ScraperLib:
         if self.ray_instance is None:
             if not ray.is_initialized():
                 try:
-                    runtime_env = {"working_dir": "."}
+                    # working_dir gives the Ray workers the same cwd as the
+                    # driver, so relative --dir/--output-dir paths resolve the
+                    # same way. Without excludes it also tries to upload .venv
+                    # and .git, which blows past Ray's 512 MiB package limit and
+                    # makes ray.init() fail loudly before falling back.
+                    runtime_env = {
+                        "working_dir": ".",
+                        "excludes": [
+                            "/.git", "/.venv", "venv", "/build", "/dist",
+                            "/docs/_build", "__pycache__", "*.egg-info",
+                        ],
+                    }
                     ray.init(
                         include_dashboard=False,
                         logging_level=logging.ERROR,
@@ -927,12 +942,11 @@ base_url (Optional[str]): Referer header; defaults to file_url.
 
             log(f"[TRY] Downloading: {file_url}", "info")
             local_filename = os.path.join(download_dir, file_url.split('/')[-1])
-            used_headers = headers
+            # Copy rather than alias: `headers` is the caller's dict, shared by
+            # every file in the run, so updating it in place leaked one file's
+            # User-Agent into all the others.
+            base_headers = dict(headers) if headers else {}
             used_user_agents = user_agents
-            used_headers.update({
-                'User-Agent': random.choice(used_user_agents),
-                'Referer': base_url if base_url else file_url
-            })
             timestamp = int(time.time())
             temp_filename = f"{local_filename}.{timestamp}.tmp"
 
@@ -941,6 +955,16 @@ base_url (Optional[str]): Referer header; defaults to file_url.
                     if attempt > 0:
                         current_delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
                         current_delay *= random.uniform(0.8, 1.2)
+                    # Draw a fresh User-Agent for EVERY attempt. This used to be
+                    # drawn once, above the loop, so a retry after a 403 replayed
+                    # the exact identity that had just been blocked. README.md
+                    # advertises rotation "on each request and after 403 errors";
+                    # tests/test_user_agent_rotation.py now holds that to it.
+                    used_headers = dict(base_headers)
+                    used_headers.update({
+                        'User-Agent': random.choice(used_user_agents),
+                        'Referer': base_url if base_url else file_url
+                    })
                     session = requests.Session()
                     session.headers.update(used_headers)
                     start_time = time.time()
@@ -1167,67 +1191,27 @@ base_url (Optional[str]): Referer header; defaults to file_url.
             ray.shutdown()
 
     @staticmethod
-    def cli() -> None:
+    def build_arg_parser() -> "argparse.ArgumentParser":
         """
-        Command-line interface to run ScraperLib.
+        Build the argument parser used by every entry point.
 
-        Reads arguments from the terminal, instantiates ScraperLib, and runs the process.
+        Exposed separately so that ``docs/cli.rst`` can render the flags with the
+        ``.. argparse::`` directive straight from this definition. The page used
+        to be maintained by hand and documented ``--output``, ``--max-workers``
+        and ``--resume``, none of which ever existed here.
 
-        Usage example:
-            python -m scraper_lib.cli --url <URL> --patterns .csv .zip --dir data --max-files 10
+        Returns:
+            argparse.ArgumentParser: Parser with every documented flag.
 
-        Parameters:
-            --url: Base URL to scrape for files.
-            --patterns: List of file patterns to match (e.g. .csv .zip).
-            --dir: Download directory.
-            --incremental: Enable incremental download state.
-            --max-files: Limit number of files to download.
-            --max-concurrent: Max parallel downloads.
-            --chunk-size: Chunk size for downloads (e.g. 1gb, 10mb, 8 bytes).
-            --initial-delay: Initial delay between retries (seconds).
-            --max-delay: Maximum delay between retries (seconds).
-            --max-retries: Maximum number of download retries.
-            --state-file: Path for download state file.
-            --log-file: Path for main log file.
-            --report-prefix: Prefix for report files.
-            --headers: Path to JSON file with custom headers.
-            --user-agents: Path to text file with custom user agents (one per line).
-            --disable-logging: Disable all logging for production pipelines.
-            --disable-terminal-logging: Disable terminal logging.
-            --dataset-name: Dataset name for banner.
-            --disable-progress-bar: Disable tqdm progress bar.
-            --output-dir: Directory for report PNGs and JSON.
-            --max-old-logs: Max old log files to keep (default: 25, None disables rotation).
-            --max-old-runs: Max old report/png runs to keep (default: 25, None disables rotation).
+        The flag list is deliberately NOT repeated in prose here or in the
+        parser epilog: `add_argument` below is the single source of truth and
+        `docs/cli.rst` renders it directly.
         """
-        import argparse
         parser = argparse.ArgumentParser(
+            # Without prog=, `python -m scraper_lib --help` reports its usage as
+            # "__main__.py". `scraper` is the name docs/cli.rst documents.
+            prog="scraper",
             description="Generic parallel file downloader",
-            epilog="""
-Arguments:
-  --url                Base URL to scrape for files.
-  --patterns           List of file patterns to match (e.g. .csv .zip).
-  --dir                Download directory.
-  --incremental        Enable incremental download state.
-  --max-files          Limit number of files to download.
-  --max-concurrent     Max parallel downloads.
-  --chunk-size         Chunk size for downloads (e.g. 1gb, 10mb, 8 bytes).
-  --initial-delay      Initial delay between retries (seconds).
-  --max-delay          Maximum delay between retries (seconds).
-  --max-retries        Maximum number of download retries.
-  --state-file         Path for download state file.
-  --log-file           Path for main log file.
-  --report-prefix      Prefix for report files.
-  --headers            Path to JSON file with custom headers.
-  --user-agents        Path to text file with custom user agents (one per line).
-  --disable-logging    Disable all logging for production pipelines.
-  --disable-terminal-logging Disable terminal logging.
-  --dataset-name       Dataset name for banner.
-  --disable-progress-bar Disable tqdm progress bar.
-  --output-dir         Directory for report PNGs and JSON.
-  --max-old-logs       Max old log files to keep (default: 25, None disables rotation).
-  --max-old-runs       Max old report/png runs to keep (default: 25, None disables rotation).
-"""
         )
         parser.add_argument("--url", required=True, help="Base URL to scrape for files")
         parser.add_argument("--patterns", nargs="+", required=True, help="List of file patterns to match (e.g. .csv .zip)")
@@ -1251,7 +1235,25 @@ Arguments:
         parser.add_argument("--initial-delay", type=float, default=1.0, help="Initial delay between retries (seconds)")
         parser.add_argument("--max-delay", type=float, default=60.0, help="Maximum delay between retries (seconds)")
         parser.add_argument("--max-retries", type=int, default=5, help="Maximum number of download retries")
-        args = parser.parse_args()
+        return parser
+
+    @staticmethod
+    def cli(argv: Optional[List[str]] = None) -> None:
+        """
+        Command-line interface to run ScraperLib.
+
+        Parses arguments, instantiates ScraperLib and runs the process. Reached
+        by ``scraper``, ``python -m scraper_lib`` and ``python -m
+        scraper_lib.cli`` -- see :mod:`scraper_lib.cli`.
+
+        Args:
+            argv (Optional[List[str]]): Argument list; defaults to ``sys.argv[1:]``.
+
+        Usage example:
+            python -m scraper_lib --url <URL> --patterns .csv .zip --dir data --max-files 10
+        """
+        parser = ScraperLib.build_arg_parser()
+        args = parser.parse_args(argv)
 
         headers = None
         user_agents = None
